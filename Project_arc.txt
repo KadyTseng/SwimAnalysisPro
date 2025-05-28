@@ -1,0 +1,45 @@
+SwimAnalysisPro/
+├── main.py                     # 應用程式主入口：啟動 UI，整合前後端。
+|
+├── UI/                         # **使用者介面 (前端)**：所有介面相關程式碼
+│   ├── __init__.py             # UI 模組初始化
+│   ├── main_window.py          # 主視窗定義，包含整體佈局和 UI 邏輯。
+│   ├── video_player_widget.py  # 負責影片播放、控制、顯示後製影片。
+│   ├── analysis_display_widget.py # 顯示分析數據（圖表、表格）的面板。
+│   └── controls_widget.py      # 包含「選擇影片」、「開始分析」等操作按鈕。
+|
+├── BD/                    # **後端分析與處理層**：核心分析與數據處理邏輯
+│   ├── __init__.py             # Backend 模組初始化
+│   ├── orchestrator.py         # **後端協調器 / 主控邏輯**：管理分析流程，調度各模組。
+│   ├── pose_estimator.py       # **骨架模型**(models)：負責影片轉關節點 TXT。
+│   ├── txt_base.py             # **關節點TXT基本處理**(keypoints)：負責把關節點 TXT做內插平滑。
+│   ├── diving_analyzer_track_angles.py  # **潛泳軌跡與踢腿角度計算**：處理潛泳數據。
+│   ├── stroke_style_recognizer.py # **泳姿辨識**：判斷泳姿類型。
+│   ├── stroke_counter/         # **划手次數演算法庫**：根據泳姿選擇不同演算法。
+│   │   ├── __init__.py
+│   │   ├── freestyle_counter.py # 自由式划手
+│   │   ├── breaststroke_counter.py # 蛙式划手
+│   │   ├── backstroke_counter.py  # 仰式划手
+│   │   └── butterfly_counter.py  # 蝶式划手
+│   ├── split_speed_analyzer.py # **分段計時與速度計算**：計時與追焦速度分析。
+│   ├── video_postprocessor.py  # **後製影片生成**：將所有分析數據疊加到影片。
+│   └── workers.py              # 執行緒工作者：用於在後台執行耗時任務，保持 UI 流暢。
+|
+├── data/                       # **數據儲存層**：專案運行時生成的數據
+│   ├── videos/                 # 可選：存放原始影片的副本（如果需要）。
+│   ├── keypoints/              # 存放骨架模型生成的關節點 TXT 檔案。
+│   ├── analysis_results/       # 存放分析結果數據（如 JSON 或 CSV 格式的指標）。
+│   └── processed_videos/       # 存放最終生成的後製影片。
+|
+├── utils/                      # 工具類：通用函數和配置
+│   ├── __init__.py
+│   ├── config.py               # 專案配置，如檔案路徑、參數設定。
+│   └── data_structures.py      # 自定義數據結構定義（如果需要）。
+|
+├── tests/                      # 測試程式碼：驗證各模組功能
+│   ├── __init__.py
+│   └── test_backend_logic.py   # 後端模組的單元測試或整合測試。
+|
+├── .gitignore                  # Git 版本控制忽略文件。
+└── requirements.txt            # 專案所需的 Python 函式庫列表。
+└── Project_arc.txt             # 專案架構。

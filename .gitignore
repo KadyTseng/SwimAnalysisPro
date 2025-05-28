@@ -1,0 +1,13 @@
+# 忽略影片與大檔
+*.mp4
+*.pt
+*.rar
+*.zip
+*.avi
+
+# 忽略 Jupyter Notebook checkpoint
+.ipynb_checkpoints/
+
+# 忽略 PyTorch 暫存模型檔
+*.pth
+*.ckpt
