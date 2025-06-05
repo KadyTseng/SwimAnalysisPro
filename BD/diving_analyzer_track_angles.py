@@ -92,8 +92,8 @@ e1 = int(largest_segments[0][0][-1][0])
 s2 = int(largest_segments[1][0][0][0])
 e2 = int(largest_segments[1][0][-1][0])                 # 取得區段的頭尾 frame_id：潛泳第一區段記為 (s1, e1)，第二區段記為 (s2, e2)
 
-# if s1 > s2:                                           # 先demo去程就好
-#     s1, e1, s2, e2 = s2, e2, s1, e1
+if s1 > s2:                                           # 先demo去程就好
+    s1, e1, s2, e2 = s2, e2, s1, e1
     
 # === 4. 潛泳區段的踢腿角度  ===
 
