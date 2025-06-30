@@ -1,120 +1,92 @@
-import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+from scipy.ndimage import uniform_filter1d
 from scipy.signal import argrelextrema
+import os
 
-# ---------------- Part 1: 從第一個 txt 取得兩個最大區段 ----------------
-
-EXPECTED_COLS = 12
-
-def read_and_clean_txt(path, expected_cols=EXPECTED_COLS):
+def generate_smoothed_txt(final_output_path):
     """
-    讀取 txt 檔案，假設每一行至少有 expected_cols 欄，
-    並取出 frame_id 和第 9 欄（index=8）的數值（例如 col8）。
+    從 txt_base.py 產出的 final_output.txt 讀取，
+    對第11欄(shoulder Y)做 Hampel 濾波與 uniform filter，
+    並輸出同目錄下 final_output_hampel_uniform.txt，
+    回傳新檔案路徑。
     """
+    def hampel_filter(signal, window_size=50, n_sigmas=3):
+        filtered = signal.copy()
+        L = 1
+        for i in range(window_size, len(signal) - window_size):
+            window = signal[i - window_size:i + window_size + 1]
+            median = np.median(window)
+            std = L * np.median(np.abs(window - median))
+            if np.abs(signal[i] - median) > n_sigmas * std:
+                filtered[i] = median
+        return filtered
+
+    # 讀檔 + 轉為 list of list
+    with open(final_output_path, 'r') as f:
+        lines = [line.strip().split() for line in f if line.strip()]
+
+    col11 = np.array([float(row[11]) for row in lines])
+
+    # Hampel 濾波
+    col11_hampel = hampel_filter(col11, window_size=50, n_sigmas=3)
+    # uniform_filter1d 平滑
+    col11_smooth = uniform_filter1d(col11_hampel, size=40)
+
+    # 將平滑後結果寫回 lines，保留原格式
+    for i in range(len(lines)):
+        lines[i][11] = f"{col11_smooth[i]:.6f}"
+
+    # 輸出路徑
+    dir_path = os.path.dirname(final_output_path)
+    base_name = os.path.basename(final_output_path).replace('.txt', '_hampel_uniform.txt')
+    smoothed_txt_path = os.path.join(dir_path, base_name)
+
+    with open(smoothed_txt_path, 'w') as f:
+        for row in lines:
+            f.write(' '.join(row) + '\n')
+
+    return smoothed_txt_path
+
+
+def find_touch_frame(file_path, threshold=2540):
+    """
+    從 bbox txt 檔中找出右游過半後，x_center + width/2 > threshold 的第一個 frame，視為觸牆
+    """
+    max_frame = 0
     data = []
-    with open(path, 'r') as f:
+    with open(file_path, 'r') as f:
         for line in f:
             parts = line.strip().split()
-            if len(parts) >= expected_cols:
-                try:
-                    frame_id = int(parts[0])
-                    col8 = float(parts[8])
-                    data.append((frame_id, col8))
-                except:
-                    continue
-    return pd.DataFrame(data, columns=['frame_id', 'col8'])
+            if len(parts) < 5:
+                continue
+            frame_id = int(parts[0])
+            x_center = float(parts[2])
+            width = float(parts[4])
+            data.append((frame_id, x_center, width))
+            max_frame = max(max_frame, frame_id)
 
-# 設定第一個 txt 的路徑（col8 smoothed）
-col8_path = r"D:\Kady\swimmer coco\stroke_data\predict_train8\backstroke\Excellent_20230414_backstroke_M_3 (3)\Excellent_20230414_backstroke_M_3 (3)_1_col8_smoothed.txt"
-df = read_and_clean_txt(col8_path)
+    half_frame = max_frame // 2
+    for frame_id, x_center, width in data:
+        if frame_id >= half_frame:
+            x_right = x_center + width / 2
+            if x_right > threshold:
+                return frame_id
+    return None
 
-# 找出所有大於等於 360 的連續區段
-segments = []
-current_segment = []
-in_segment = False
 
-for idx, row in df.iterrows():
-    frameid = row['frame_id']
-    value = row['col8']
-    if value >= 358:
-        if not in_segment:
-            in_segment = True
-            current_segment = [(frameid, value)]
-        else:
-            current_segment.append((frameid, value))
+def filter_local_peaks(raw_indices, signal, waterline_y, min_gap=40, peak_type='max'):
+    """
+    篩選局部極大值或極小值，
+    peak_type 可為 'max' 或 'min'，
+    條件為峰值大於(或小於)水面水準線，
+    且峰值間距大於 min_gap。
+    """
+    if peak_type == 'max':
+        condition = lambda v: v > waterline_y
     else:
-        if in_segment:
-            segments.append(current_segment)
-            in_segment = False
-            current_segment = []
-# 若最後一行仍屬於區段，也加入
-if current_segment:
-    segments.append(current_segment)
+        condition = lambda v: v < waterline_y
 
-# 根據連續點數（長度）排序，選出最大的兩個區段
-segment_lengths = [(segment, len(segment)) for segment in segments]
-segment_lengths.sort(key=lambda x: x[1], reverse=True)
-largest_segments = segment_lengths[:2]
-
-# 假設每個區段的資料為 list of tuple，如 [(frame_id, value), ...]
-# 取得區段的頭尾 frame_id：第一區段記為 (s1, e1)，第二區段記為 (s2, e2)
-s1 = int(largest_segments[0][0][0][0])
-e1 = int(largest_segments[0][0][-1][0])
-s2 = int(largest_segments[1][0][0][0])
-e2 = int(largest_segments[1][0][-1][0])
-
-# 若順序錯誤（例如 s1 大於 s2），則交換兩區段
-if s1 > s2:
-    s1, e1, s2, e2 = s2, e2, s1, e1
-
-print("第一區段：Start = {}, End = {}".format(s1, e1))
-print("第二區段：Start = {}, End = {}".format(s2, e2))
-
-# --------------------- 設定已知的區段邊界 ---------------------
-# 從第一個 txt 得到的區段邊界
-# --------------------- Part 2: 讀取第二個 txt 的第一行 ---------------------
-# 設定第二個 txt 的路徑，該檔第一行所有數字依序代表各 frame 的 col11 值
-col11_path = r"D:\Kady\swimmer coco\stroke_data\predict_train8\backstroke\Excellent_20230414_backstroke_M_3 (3)\Excellent_20230414_backstroke_M_3 (3)_1_col11_smoothed_uniform.txt"
-
-col11 = []
-with open(col11_path, 'r') as f:
-    for line in f:
-        parts = line.strip().split()
-        if len(parts) >= 13:
-            col11.append(float(parts[11]))  # index 12 是你要的數值
-        else:
-            col11.append(None)  # 補 None 避免錯位
-col11 = np.array(col11) 
-middle_col11 = col11[e1:s2]
-last_col11 = col11[e2:]
-
-middle_col11 = np.array(middle_col11)
-last_col11 = np.array(last_col11)
-
-# 找極大值索引並偏移回原始索引位置
-middle_max_idx = np.asarray(argrelextrema(middle_col11, np.greater,order=40)[0]) + e1
-last_max_idx = np.asarray(argrelextrema(last_col11, np.greater,order=40)[0]) + e2
-last_min_idx = np.asarray(argrelextrema(last_col11, np.less,order=40)[0]) + e2
-
-# 2. 定義篩選函數：水平面 > 360 且 划手最短時間 > 40
-def filter_local_maxima(raw_indices, signal, value_thresh=358, min_gap=40):    
-    # 只保留 signal 值大於門檻的 maxima
-    filtered = [idx for idx in raw_indices if signal[idx] > value_thresh]
-    
-    # 篩選相鄰 maxima 的距離
-    final_result = []
-    prev = -np.inf
-    for idx in filtered:
-        if idx - prev > min_gap:
-            final_result.append(idx)
-            prev = idx
-    return np.array(final_result)
-def filter_local_minimum(raw_indices, signal, value_thresh=358, min_gap=40):    
-    # 只保留 signal 值大於門檻的 maxima
-    filtered = [idx for idx in raw_indices if signal[idx] < value_thresh]
-    
-    # 篩選相鄰 maxima 的距離
+    filtered = [idx for idx in raw_indices if condition(signal[idx])]
     final_result = []
     prev = -np.inf
     for idx in filtered:
@@ -123,65 +95,91 @@ def filter_local_minimum(raw_indices, signal, value_thresh=358, min_gap=40):
             prev = idx
     return np.array(final_result)
 
-# 3. 套用篩選條件
-middle_max_idx = filter_local_maxima(middle_max_idx, col11)
-last_max_idx = filter_local_maxima(last_max_idx, col11)
-last_min_idx = filter_local_minimum(last_min_idx, col11)
 
-# 只保留 <= touch_frame 的 local maxima   (刪除到牆邊的點)
-if touch_frame is not None:
-    last_max_idx = last_max_idx[last_max_idx <= touch_frame]
-# print(touch_frame)
-last_max_idx = last_max_idx[last_max_idx <= max(last_min_idx)]   # 最後一次划手到水面上有個最後的明顯低點，在那之後找到的高點刪掉
-    
-# 4. 接縫處附近(範圍)只算一次
+def count_backstroke_strokes(smoothed_txt_path, waterline_y, s1, e1, s2, e2, touch_frame):
+    """
+    計算仰式划手次數與時間點，回傳格式：
+    {
+        'middle': {'frames': [...], 'count': N},
+        'last': {'frames': [...], 'count': M}
+    }
+    """
+    # 預設接縫範圍，可視實際需求修改
+    seam_ranges = [(570, 700), (1210, 1340), (1850, 1980)]
 
-plt.figure(figsize=(18, 4))
-plt.plot(col11, label="shoulder")
+    # 讀入 txt
+    with open(smoothed_txt_path, 'r') as f:
+        lines = [line.strip().split() for line in f if line.strip()]
 
-# 畫虛線區段
-plt.axvline(x=e1, color='gray', linestyle='--', label='Start of middle section')
-plt.axvline(x=s2, color='gray', linestyle='--', label='End of middle section')
-plt.axvline(x=e2, color='gray', linestyle='--', label='Start of last section')
-plt.axvline(x=2473, color='green', linestyle='--', label='wall')
+    col11 = np.array([float(parts[11]) for parts in lines])
+    col10 = np.array([float(parts[10]) for parts in lines])
+    frame_ids = np.array([int(parts[0]) for parts in lines])
 
-plt.axvline(x=1046, color='red', linestyle='--')
-plt.axvline(x=1075, color='red', linestyle='--', alpha =0.3)
-plt.axvline(x=1140, color='red', linestyle='--')
-plt.axvline(x=1203, color='red', linestyle='--', alpha =0.3)
-plt.axvline(x=1272, color='red', linestyle='--')
-plt.axvline(x=1956, color='red', linestyle='--')
-plt.axvline(x=2088, color='red', linestyle='--')
-plt.axvline(x=2232, color='red', linestyle='--')
-plt.axvline(x=2352, color='red', linestyle='--')
-# 在虛線底下標上 frame 數字
-ymin, ymax = plt.ylim()  # 取得 Y 軸範圍，方便定位文字
-offset = (ymax - ymin) * 0.001  # 往下偏移一點，避免重疊
+    # 分段資料
+    middle_col11 = col11[e1:s2]
+    last_col11 = col11[e2:touch_frame]
 
-plt.text(e1, ymin - offset, f'{e1}', ha='center', va='top', fontsize=9, color='gray')
-plt.text(s2, ymin - offset, f'{s2}', ha='center', va='top', fontsize=9, color='gray')
-plt.text(e2, ymin - offset, f'{e2}', ha='center', va='top', fontsize=9, color='gray')
+    # 偵測局部極大值（峰值）
+    middle_peaks = argrelextrema(middle_col11, np.greater, order=40)[0] + e1
+    last_peaks = argrelextrema(last_col11, np.greater, order=40)[0] + e2
 
-# 畫出 local maxima
-plt.plot(middle_max_idx, col11[middle_max_idx], 'ro', label='shoulder under water')
-plt.plot(last_max_idx, col11[last_max_idx], 'ro', label='shoulder under water')
-# plt.plot(last_min_idx, col11[last_min_idx], 'bo', label='shoulder above water')
+    # 篩選符合水下划手條件
+    middle_peaks = filter_local_peaks(middle_peaks, col11, waterline_y, peak_type='max')
+    last_peaks = filter_local_peaks(last_peaks, col11, waterline_y, peak_type='max')
 
-plt.legend()
-plt.title("Local Maxima in Specified Sections")
-plt.xlabel("Frame Index")
-plt.ylabel("col11 Value")
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+    # 過濾最後段不合理划手：在最後一次肩膀浮出水面後的峰值需去除
+    last_min = argrelextrema(last_col11, np.less, order=40)[0] + e2
+    if len(last_min) > 0:
+        max_valid = np.max(last_min)
+        last_peaks = last_peaks[last_peaks <= max_valid]
 
-# 顯示 middle_max_idx 的 (x, y)
-print("Middle Section Local Maxima (Frame, Value):")
-for idx in middle_max_idx:
-    print(f"({idx}, {col11[idx]:.3f})")
+    # 處理接縫重複峰值：保留該區最小 frame 的峰值
+    seam_margin = 0
+    used = set()
+    filtered_last_peaks = []
+    for start, end in seam_ranges:
+        in_seam = [idx for idx in last_peaks if start <= col10[idx] <= end and idx not in used]
+        if in_seam:
+            keep = min(in_seam)
+            filtered_last_peaks.append(keep)
+            used.update(in_seam)
+    for idx in last_peaks:
+        if idx not in used:
+            filtered_last_peaks.append(idx)
 
-# 顯示 last_max_idx 的 (x, y)
-print("\nLast Section Local Maxima (Frame, Value):")
-for idx in last_max_idx:
-    print(f"({idx}, {col11[idx]:.3f})")
+    last_peaks = sorted(filtered_last_peaks)
 
+    return {
+        'middle': {
+            'frames': middle_peaks.tolist(),
+            'count': len(middle_peaks)
+        },
+        'last': {
+            'frames': last_peaks,
+            'count': len(last_peaks)
+        }
+    }
+
+
+# if __name__ == "__main__":
+#     # 示範用，請自行替換路徑與參數
+#     final_output_path = r"path\to\final_output.txt"  # txt_base.py 產出路徑
+#     bbox_txt_path = r"path\to\bbox_file.txt"        # 用於找 touch_frame 的 bbox txt 檔
+
+#     # 先從 final_output.txt 產生濾波後的 smoothed_txt_path
+#     smoothed_txt_path = generate_smoothed_txt(final_output_path)
+
+#     # 找 touch_frame
+#     touch_frame = find_touch_frame(bbox_txt_path)
+#     print(f"touch_frame: {touch_frame}")
+
+#     # 這裡示範水面水平線 waterline_y 與兩段潛泳段 (s1,e1), (s2,e2)
+#     # 這些參數請從 diving_analyzer_track_angles.py 或其他地方取得
+#     waterline_y = 360  # 範例值，請用偵測到的實際值
+#     s1, e1 = 100, 400  # 潛泳第一段範圍 範例
+#     s2, e2 = 450, 800  # 潛泳第二段範圍 範例
+
+#     # 計算划手次數
+#     result = count_backstroke_strokes(smoothed_txt_path, waterline_y, s1, e1, s2, e2, touch_frame)
+#     print("划手時間點與次數：")
+#     print(result)
