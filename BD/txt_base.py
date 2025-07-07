@@ -8,7 +8,7 @@ def process_keypoints_txt(
     filtered_output: str = None,
     final_output: str = None,
     save_filtered: bool = False,
-    save_first_output: bool = True,
+    save_first_output: bool = False,
     save_final_output: bool = True
 ):
     """
@@ -108,9 +108,10 @@ def process_keypoints_txt(
     # === 讀取補值內插後檔案，進行平滑 ===
     if first_output is not None:
         df = pd.read_csv(first_output, sep='\s+', header=None)
+        df.columns = list(range(df.shape[1]))
     else:
         # 若沒指定檔案，使用目前df
-        pass
+        df.columns = list(range(df.shape[1]))
 
     # 平滑欄位（BBOX與7關鍵點）
     smooth_columns = [2, 3, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 19, 20, 22, 23, 25, 26]
@@ -130,3 +131,12 @@ def process_keypoints_txt(
         final_output = None  # 防呆
 
     return final_output  # <<< 回傳檔案路徑給 orchestrator 或其他模組使用
+# DEMO
+# input_txt =r"D:\Kady\swimmer coco\Swimming stroke recognition\demo\Excellent_20230414_freestyle_F_3.txt"
+# final_output = r"D:\Kady\swimmer coco\Swimming stroke recognition\demo\Excellent_20230414_freestyle_F_3_1.txt"
+
+# final_path = process_keypoints_txt(
+#     input_txt=input_txt,
+#     final_output=final_output,
+#     save_final_output=True
+# )
