@@ -1,6 +1,6 @@
 # BD/video_postprocessor.py
 
-def overlay_results_on_video(video_path, analysis_results, output_path, split_times=None):
+def overlay_results_on_video(video_path, analysis_results, output_path, split_times=None, focus_video_path=None):
     """
     根據分析結果將資訊畫在影片上。
     split_times: dict，格式例子：
@@ -21,7 +21,11 @@ def overlay_results_on_video(video_path, analysis_results, output_path, split_ti
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
+    
+    focus_cap = None
+    if focus_video_path is not None:
+        focus_cap = cv2.VideoCapture(focus_video_path)
+        
     frame_id = 0
     active_labels = []
 
@@ -73,14 +77,25 @@ def overlay_results_on_video(video_path, analysis_results, output_path, split_ti
                 2
             )
 
-        # 保留你原本 stroke_frames 標記
+        # 保留 stroke_frames 標記
         if 'stroke_frames' in analysis_results:
             if frame_id in analysis_results['stroke_frames']:
                 cv2.putText(frame, 'Stroke!', (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 3)
 
+        # 疊加追焦小影片
+        if focus_cap is not None:
+            ret_f, focus_frame = focus_cap.read()
+            if ret_f:
+                fh, fw, _ = focus_frame.shape
+                x_offset = width - fw - 20
+                y_offset = 20
+                frame[y_offset:y_offset+fh, x_offset:x_offset+fw] = focus_frame
         out.write(frame)
         frame_id += 1
 
     cap.release()
     out.release()
+    if focus_cap is not None:
+        focus_cap.release()
+    
     print(f"影片後製完成：{output_path}")

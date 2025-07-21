@@ -1,6 +1,6 @@
 # BD/orchestrator.py
 
-import os
+import os, cv2
 
 from BD.pose_estimator import run_pose_estimation
 from BD.txt_base import process_keypoint_txt
@@ -18,6 +18,7 @@ from BD.stroke_counter.backstroke_counter import (
 
 from BD.split_speed_analyzer import analyze_split_times  
 from BD.video_postprocessor import overlay_results_on_video
+from BD.focus_tracking_view import export_focus_only_video
 
 def run_full_analysis(model_path, video_path, output_dir):
     # Step 1: 姿態估計
@@ -55,7 +56,7 @@ def run_full_analysis(model_path, video_path, output_dir):
     else:
         raise ValueError(f"無法辨識泳姿: {stroke_style}")
 
-    # 取得影片fps與寬度，計算距離線位置
+    # Step 8: 取得影片fps與寬度，計算距離線位置
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -69,6 +70,14 @@ def run_full_analysis(model_path, video_path, output_dir):
     passed, total_time = analyze_split_times(
         final_output_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0)
     
+    
+    # Step 9: 產生追焦影片
+    focus_video_path = os.path.join(output_dir, "focus_only.mp4")
+    export_focus_only_video(video_path, smoothed_txt_path, focus_video_path)
+    
+    
+    
+    
     # 輸出後製影片路徑
     processed_video_path = os.path.join(output_dir, "processed_" + os.path.basename(video_path))
     
@@ -81,7 +90,8 @@ def run_full_analysis(model_path, video_path, output_dir):
             "start_frame": start_frame,
             "fps": fps,
             "line_positions": {"15m": d15m_x0, "25m": d25m_x0, "50m": d50m_x0}
-        }
+        },
+        focus_video_path=focus_video_path
     )
     return {
         "stroke_style": stroke_style,
@@ -93,6 +103,7 @@ def run_full_analysis(model_path, video_path, output_dir):
         "stroke_result": stroke_result,
         "passed": passed,
         "total_time": total_time,
+        "focus_video_path": focus_video_path,
         "processed_video_path": processed_video_path
     }
 

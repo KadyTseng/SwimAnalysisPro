@@ -12,7 +12,7 @@ def main():
     
     # 當使用者按「Video processing」按鈕時，跑後端分析與後製
     def on_video_processing():
-        video_path = window.video_player.current_video_path  # 假設你有存目前影片路徑屬性
+        video_path = window.video_player.current_video_path 
         if not video_path:
             print("請先選擇影片")
             return

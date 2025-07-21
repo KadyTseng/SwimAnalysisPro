@@ -21,7 +21,8 @@ SwimAnalysisPro/
 │   │   ├── breaststroke_counter.py # 蛙式划手
 │   │   ├── backstroke_counter.py  # 仰式划手
 │   │   └── butterfly_counter.py  # 蝶式划手
-│   ├── split_speed_analyzer.py # **分段計時與速度計算**：計時與追焦速度分析。
+│   ├── split_speed_analyzer.py # **分段計時與速度計算**：計時。
+│   ├── focus_tracking_view.py # **追焦框**：追焦畫面剪裁。
 │   ├── video_postprocessor.py  # **後製影片生成**：將所有分析數據疊加到影片。
 │   └── workers.py              # 執行緒工作者：用於在後台執行耗時任務，保持 UI 流暢。
 |
