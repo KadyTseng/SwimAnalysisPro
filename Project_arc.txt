@@ -15,6 +15,13 @@ SwimAnalysisPro/
 │   ├── txt_base.py             # **關節點TXT基本處理**(keypoints)：負責把關節點 TXT做內插平滑。
 │   ├── diving_analyzer_track_angles.py  # **潛泳軌跡與踢腿角度計算**：處理潛泳數據。
 │   ├── stroke_style_recognizer.py # **泳姿辨識**：判斷泳姿類型。
+│   ├── stroke_analysis/         # **划手次數演算法庫**：根據泳姿選擇不同演算法。
+│   │   ├── __init__.py
+│   │   ├── backstroke_butterfly_stroke_stage.py # 仰式、蝶式划手分析階段
+│   │   ├── backstroke_butterfly_stroke_phase_plot.py # 仰式、蝶式划手畫圖
+│   │   ├── breaststroke_stroke_stage.py # 蛙式划手分析階段
+│   │   ├── breaststroke_stroke_phase_plot.py # 蛙式划手畫圖
+│   │   └── freestyle_stroke_stage.py  # 自由式划手
 │   ├── stroke_counter/         # **划手次數演算法庫**：根據泳姿選擇不同演算法。
 │   │   ├── __init__.py
 │   │   ├── freestyle_counter.py # 自由式划手
