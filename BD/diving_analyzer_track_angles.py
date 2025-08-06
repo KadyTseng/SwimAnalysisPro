@@ -4,7 +4,7 @@ import pandas as pd
 import cv2
 from scipy.signal import argrelextrema
 
-def read_and_clean_txt(path, expected_cols=12):
+def read_and_clean_txt(path, expected_cols=4):
     """
     讀取 keypoints txt ，只擷取 frame_id、bbox_x、bbox_y、頭部 y座標(col8)
     """
@@ -17,11 +17,13 @@ def read_and_clean_txt(path, expected_cols=12):
                     frame_id = int(parts[0])
                     bbox_x = float(parts[2])  
                     bbox_y = float(parts[3])
-                    col8 = float(parts[8])  # 頭部 y 座標
-                    data.append((frame_id, bbox_x, bbox_y, col8))
+                    col8 = float(parts[8])
+                    hip_x = float(parts[19])  # 髖關節 x
+                    hip_y = float(parts[20])  # 髖關節 y
+                    data.append((frame_id, bbox_x, bbox_y, col8, hip_x, hip_y))
                 except:
                     continue
-    return pd.DataFrame(data, columns=['frame_id', 'bbox_x', 'bbox_y', 'col8'])
+    return pd.DataFrame(data, columns=['frame_id', 'bbox_x', 'bbox_y', 'col8', 'hip_x' , 'hip_y'])
 
 def calculate_angle(A, B, C):
     """
@@ -189,16 +191,18 @@ def draw_trajectory_on_video(
     track_points = []
     frame_id = 0
 
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
         row = df[df['frame_id'] == frame_id]
-        if not row.empty:
-            x = int(row['bbox_x'].values[0])
-            y = int(row['bbox_y'].values[0])
 
+        if not row.empty:
+            x = int(row['hip_x'].values[0])
+            y = int(row['hip_y'].values[0])
+            
             if segment_start <= frame_id <= segment_end:
                 track_points.append((x, y))
 
@@ -232,7 +236,7 @@ def analyze_diving_phase(
     - local_min_frames: 潛泳第一段局部最小角度幀列表
     - local_min_values: 潛泳第一段局部最小角度值列表
     """
-
+    # 1. 抓影片第一幀判斷水面
     cap = cv2.VideoCapture(video_path)
     ret, frame = cap.read()
     if not ret:
@@ -243,18 +247,24 @@ def analyze_diving_phase(
     if waterline_y is None:
         cap.release()
         raise RuntimeError("Cannot detect waterline.")
+    
+    # 2. 讀關節點資料（簡版用於找潛泳）
+    df_clean = read_and_clean_txt(keypoints_txt_path)
+    
+    # 3. 找出兩段潛泳區段
+    largest_segments = find_largest_submerged_segments(df_clean, waterline_y)
 
-    df = read_and_clean_txt(keypoints_txt_path)
-
-    largest_segments = find_largest_submerged_segments(df, waterline_y)
-
+    # 4. 計算踢腿角度並輸出
     calculate_kick_angles(keypoints_txt_path, output_angle_path)
-
+    
+    # 5. 針對第一段找踢腿最小角度幀
     s1, e1 = largest_segments[0]
 
     local_min_frames, local_min_values = find_local_min_angles(output_angle_path, s1, e1)
-
-    draw_trajectory_on_video(video_path, df, output_video_path, s1, e1)
+    
+    # 6. 用完整骨架資料畫髖關節軌跡
+    df_full =read_and_clean_txt(keypoints_txt_path)
+    draw_trajectory_on_video(video_path, df_full, output_video_path, s1, e1)
 
     cap.release()
 
