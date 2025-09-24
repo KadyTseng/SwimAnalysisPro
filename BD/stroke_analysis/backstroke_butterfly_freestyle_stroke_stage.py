@@ -1,5 +1,4 @@
-# SwimAnalysisPro/BD/stroke_analysis/backstroke_butterfly_stroke_waveform.py
-
+# SwimAnalysisPro/BD/stroke_analysis/backstroke_butterfly_freestyle_stroke_stage.py
 import cv2
 import pandas as pd
 import numpy as np
@@ -57,7 +56,19 @@ def find_submerged_segments(df, waterline_y, top_n=2):
     top_segments.sort(key=lambda seg: seg[0])
     return [(seg[0], seg[-1]) for seg in top_segments]
 
-def find_touch_frame(df, threshold=3800):
+# def find_touch_frame(df, threshold=3800):
+#     max_frame = df['frame_id'].max()
+#     half_frame = max_frame // 2
+#     for _, row in df.iterrows():
+#         if row['frame_id'] >= half_frame:
+#             if row['x_center'] + row['width'] / 2 > threshold:
+#                 return int(row['frame_id'])
+#     return None
+def find_touch_frame(df, video_width):
+    """
+    找觸牆幀：當 x_center + width/2 > video_width - 40
+    """
+    threshold = video_width - 40
     max_frame = df['frame_id'].max()
     half_frame = max_frame // 2
     for _, row in df.iterrows():
@@ -69,8 +80,13 @@ def find_touch_frame(df, threshold=3800):
 def extract_stroke_segments(txt_path, video_path):
     df = read_txt(txt_path)
     waterline_y = detect_waterline_y(video_path)
+    
+    cap = cv2.VideoCapture(video_path)
+    v_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    cap.release()
+    
     (s1, e1), (s2, e2) = find_submerged_segments(df, waterline_y)
-    touch_frame = find_touch_frame(df)
+    touch_frame = find_touch_frame(df,v_width)
     return e1, s2, e2, touch_frame, waterline_y
 
 def extract_columns_in_range(txt_path, range1, range2):
@@ -116,41 +132,73 @@ def plot_intersection_from_smoothed(data_dict, smooth_size=10):
         intersection_result[key] = intersection_frames.tolist()
     return intersection_result
 
-from .backstroke_butterfly_stroke_phase_plot import plot_phase_on_col11_col17  # 分開管理 plot 實作
+import os
+from .backstroke_butterfly_freestyle_stroke_phase_plot import plot_phase_on_col11_col17  # 分開管理 plot 實作
 
 def run_backstroke_butterfly_analysis(txt_path: str, video_path: str):
     e1, s2, e2, touch_frame, waterline_y = extract_stroke_segments(txt_path, video_path)
+    
+    if None in (e1, s2, e2, touch_frame):
+        print(f"⚠️ 區間資訊缺失，跳過影片: {video_path}")
+        return
+    
     range1 = (e1, s2)
     range2 = (e2, touch_frame)
     data = extract_columns_in_range(txt_path, range1, range2)
     intersection_dict = plot_intersection_from_smoothed(data)
-    plot_phase_on_col11_col17(data, intersection_dict, waterline_y)
+
+    base, _ = os.path.splitext(video_path)
+    output_txt = base + ".a.txt"
+
+    plot_phase_on_col11_col17(data, intersection_dict, waterline_y, output_txt=output_txt)
 
 # ====demo ====
 
+# def main():
+
+#     txt_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\butterfly\Excellent_20230414_butterfly_M_3 (1)_1.txt"
+#     video_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\butterfly\Excellent_20230414_butterfly_M_3 (1).mp4"
+
+#     # 1. 自動偵測水面線
+#     waterline_y = detect_waterline_y(video_path)
+
+#     # 2. 讀取資料 + 找出潛泳區間 + 觸牆時間點
+#     df = read_txt(txt_path)
+#     (s1, e1), (s2, e2) = find_submerged_segments(df, waterline_y)
+#     touch_frame = find_touch_frame(df)
+
+#     # 3. 擷取有效分析段落
+#     range1 = (e1, s2)
+#     range2 = (e2, touch_frame)
+#     data = extract_columns_in_range(txt_path, range1, range2)
+
+#     # 4. 找交會點
+#     intersection_dict = plot_intersection_from_smoothed(data)
+
+#     # 5. 畫圖並標記推進/拉水/復原區段
+#     plot_phase_on_col11_col17(data, intersection_dict, waterline_y)
+
+
+# if __name__ == "__main__":
+#     main()
+
+# ==== demo ====
+
 def main():
+    folder = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\backstroke"
 
-    txt_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\demo\Excellent_20230414_butterfly_M_3 (1)_1_smoothed.txt"
-    video_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\demo\Excellent_20230414_butterfly_M_3 (1).mp4"
+    for fname in os.listdir(folder):
+        if fname.endswith(".mp4") and not fname.endswith("_1.mp4"):
+            video_path = os.path.join(folder, fname)
+            txt_name = os.path.splitext(fname)[0] + "_1.txt"
+            txt_path = os.path.join(folder, txt_name)
 
-    # 1. 自動偵測水面線
-    waterline_y = detect_waterline_y(video_path)
+            if not os.path.exists(txt_path):
+                print(f"⚠️ 找不到對應的 txt：{txt_path}")
+                continue
 
-    # 2. 讀取資料 + 找出潛泳區間 + 觸牆時間點
-    df = read_txt(txt_path)
-    (s1, e1), (s2, e2) = find_submerged_segments(df, waterline_y)
-    touch_frame = find_touch_frame(df)
-
-    # 3. 擷取有效分析段落
-    range1 = (e1, s2)
-    range2 = (e2, touch_frame)
-    data = extract_columns_in_range(txt_path, range1, range2)
-
-    # 4. 找交會點
-    intersection_dict = plot_intersection_from_smoothed(data)
-
-    # 5. 畫圖並標記推進/拉水/復原區段
-    plot_phase_on_col11_col17(data, intersection_dict, waterline_y)
+            print(f"\n🚀 處理影片：{video_path}")
+            run_backstroke_butterfly_analysis(txt_path, video_path)
 
 
 if __name__ == "__main__":

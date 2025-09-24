@@ -1,3 +1,5 @@
+# SwimAnalysisPro/freestyle_pose_estimator/freestyle_pose_estimator.py
+
 import torch
 from ultralytics import YOLO
 import cv2
@@ -13,6 +15,17 @@ def run_pose_estimation(
 ):
     """
     對影片進行姿態估計，輸出帶骨架的影片與預測結果 txt。
+
+    Args:
+        model_path: YOLO 模型權重檔路徑
+        video_path: 輸入影片路徑
+        output_dir: 輸出資料夾（會自動建立）
+        save_video: 是否輸出帶骨架的影片
+        save_txt: 是否輸出預測結果 txt
+
+    Returns:
+        output_video_path: 輸出影片路徑或 None
+        output_txt_path: 輸出 txt 路徑或 None
     """
 
     os.makedirs(output_dir, exist_ok=True)
@@ -26,16 +39,12 @@ def run_pose_estimation(
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    print(f"🎬 影片 {os.path.basename(video_path)} 總幀數: {total_frames}")
-
-    # --- 確保輸出影片名稱是 _1.mp4 ---
-    base_name, ext = os.path.splitext(os.path.basename(video_path))
-    output_video_name = base_name + "_1" + ext
-    output_video_path = os.path.join(output_dir, output_video_name)
 
     output_video_path = None
     if save_video:
-        output_video_name = base_name + "_1" + ext
+        filename = os.path.basename(video_path)
+        name, ext = os.path.splitext(filename)
+        output_video_name = f"{name}_1{ext}"
         output_video_path = os.path.join(output_dir, output_video_name)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
@@ -44,18 +53,24 @@ def run_pose_estimation(
 
     output_txt_path = None
     if save_txt:
-        output_txt_path = os.path.join(output_dir, f"{base_name}.txt")
+        output_txt_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}.txt")
         f_txt = open(output_txt_path, 'w', encoding='utf-8')
     else:
         f_txt = None
 
-    skeleton_pairs = [(1, 2), (2, 3), (1, 4), (4, 5), (5, 6)]
+    skeleton_pairs = [
+        (1, 2), (2, 3), (1, 4),
+        (4, 5), (5, 6)
+    ]
+
     colors = [
-        (255, 0, 0),   (0, 255, 0),   (0, 0, 255),
-        (255, 255, 0), (255, 0, 255), (0, 255, 255)
+        (255, 0, 0),   (0, 255, 0),   (0, 0, 255),   (255, 255, 0), 
+        (255, 0, 255), (0, 255, 255), (128, 128, 128) 
     ]
 
     frame_id = 0
+    no_detection_count = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -66,6 +81,7 @@ def run_pose_estimation(
 
         if result.keypoints is not None:
             keypoints = result.keypoints.xy.cpu().numpy() if torch.cuda.is_available() else result.keypoints.xy.numpy()
+
             keypoints_conf = result.keypoints.conf
             if keypoints_conf is not None:
                 keypoints_conf = keypoints_conf.cpu().numpy() if torch.cuda.is_available() else keypoints_conf.numpy()
@@ -92,6 +108,7 @@ def run_pose_estimation(
         if save_txt:
             if result.boxes is None or len(result.boxes) == 0:
                 f_txt.write(f"{frame_id} no detection\n")
+                no_detection_count += 1
             else:
                 xywh = result.boxes.xywh.cpu().numpy() if torch.cuda.is_available() else result.boxes.xywh.numpy()
                 confs = result.boxes.conf.cpu().numpy() if torch.cuda.is_available() else result.boxes.conf.numpy()
@@ -106,16 +123,15 @@ def run_pose_estimation(
                 for i, (box_xywh, conf, cls) in enumerate(zip(xywh, confs, classes)):
                     x_center, y_center, width, height = box_xywh
                     keypoints_line = ""
+
                     if keypoints is not None and keypoints_conf is not None and i < len(keypoints):
                         keypoint_data = keypoints[i]
                         keypoint_conf_data = keypoints_conf[i]
+
                         for (kpt_x, kpt_y), kpt_conf in zip(keypoint_data, keypoint_conf_data):
                             keypoints_line += f" {kpt_x:.6f} {kpt_y:.6f} {kpt_conf:.6f}"
 
                     f_txt.write(f"{frame_id} {int(cls)} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f} {conf:.6f}{keypoints_line}\n")
-
-        if frame_id % 50 == 0:
-            print(f"➡️ 已處理 {frame_id}/{total_frames} 幀")
 
         frame_id += 1
 
@@ -125,20 +141,24 @@ def run_pose_estimation(
     if save_txt:
         f_txt.close()
 
-    print(f"📄 Prediction saved to: {output_txt_path}" if save_txt else "No txt saved.")
-    print(f"🎞 Processed video saved to: {output_video_path}" if save_video else "No video saved.")
+    print(f"Prediction coordinates saved to: {output_txt_path}" if save_txt else "No txt saved.")
+    print(f"Processed video saved to: {output_video_path}" if save_video else "No video saved.")
 
     return output_video_path if save_video else None, output_txt_path if save_txt else None
 
 
 if __name__ == "__main__":
-    model_path = r"D:\Kady\swimmer coco\runs\pose\train8\weights\best.pt"
-    input_dir = r"D:\Kady\swimmer coco\kick_data\new\women"
-    output_dir = input_dir  # 同資料夾輸出
 
-    video_files = [f for f in os.listdir(input_dir) if f.lower().endswith(".mp4")]
+    model_path = r"D:\Kady\swimmer coco\freestyle_test\train\weights\best.pt"     # 自由式專屬
+    input_folder = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\freestyle"
+    output_dir = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\freestyle"
 
-    for fname in video_files:
-        video_path = os.path.join(input_dir, fname)
-        print(f"\n🚀 開始處理影片: {fname}")
-        run_pose_estimation(model_path, video_path, output_dir, save_video=True, save_txt=True)
+    video_extensions = (".mp4", ".avi", ".mov", ".mkv")
+
+    for file in os.listdir(input_folder):
+        if file.lower().endswith(video_extensions):
+            video_path = os.path.join(input_folder, file)
+            print(f"\nProcessing: {video_path}")
+            run_pose_estimation(model_path, video_path, output_dir)
+
+# 還要再去跑 BD/txt_base.py

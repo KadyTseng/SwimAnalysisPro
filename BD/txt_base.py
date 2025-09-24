@@ -132,11 +132,35 @@ def process_keypoints_txt(
 
     return final_output  # <<< 回傳檔案路徑給 orchestrator 或其他模組使用
 # DEMO
-# input_txt =r"D:\Kady\swimmer coco\Swimming stroke recognition\demo\Excellent_20230414_freestyle_F_3.txt"
-# final_output = r"D:\Kady\swimmer coco\Swimming stroke recognition\demo\Excellent_20230414_freestyle_F_3_1.txt"
+# input_txt =r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\butterfly\Excellent_20230414_butterfly_M_3 (1).txt"
+# final_output = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\butterfly\Excellent_20230414_butterfly_M_3 (1)_1.txt"
 
 # final_path = process_keypoints_txt(
 #     input_txt=input_txt,
 #     final_output=final_output,
 #     save_final_output=True
 # )
+# DEMO
+import os
+
+def main():
+    folder = r"D:\Kady\swimmer coco\kick_data\new\women"
+
+    for fname in os.listdir(folder):
+        if fname.endswith(".txt") and not fname.endswith(".n.txt"):
+            input_txt = os.path.join(folder, fname)
+
+            # 輸出命名：在原本檔名加上 "_1"
+            base, ext = os.path.splitext(fname)
+            final_output = os.path.join(folder, base + "_1.txt")
+
+            print(f"🚀 處理檔案: {input_txt}")
+            final_path = process_keypoints_txt(
+                input_txt=input_txt,
+                final_output=final_output,
+                save_final_output=True
+            )
+            print(f"✅ 輸出完成: {final_path}")
+
+if __name__ == "__main__":
+    main()

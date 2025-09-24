@@ -56,7 +56,19 @@ def find_submerged_segments(df, waterline_y, top_n=2):
     top_segments.sort(key=lambda seg: seg[0])
     return [(seg[0], seg[-1]) for seg in top_segments]
 
-def find_touch_frame(df, threshold=3800):
+# def find_touch_frame(df, threshold=3800):
+#     max_frame = df['frame_id'].max()
+#     half_frame = max_frame // 2
+#     for _, row in df.iterrows():
+#         if row['frame_id'] >= half_frame:
+#             if row['x_center'] + row['width'] / 2 > threshold:
+#                 return int(row['frame_id'])
+#     return None
+def find_touch_frame(df, video_width):
+    """
+    找觸牆幀：當 x_center + width/2 > video_width - 40
+    """
+    threshold = video_width - 40
     max_frame = df['frame_id'].max()
     half_frame = max_frame // 2
     for _, row in df.iterrows():
@@ -64,7 +76,6 @@ def find_touch_frame(df, threshold=3800):
             if row['x_center'] + row['width'] / 2 > threshold:
                 return int(row['frame_id'])
     return None
-
 def calculate_angle(A, B, C):
     BA = np.array(A) - np.array(B)
     BC = np.array(C) - np.array(B)
@@ -155,59 +166,135 @@ def process_range(txt_path, frame_range, slope_change, smooth_size=5, min_frame_
 
     return frames, wrist_x_smooth, wrist_y_smooth, elbow_y_smooth, shoulder_y_smooth, head_y, stroke_angles_smooth, filtered_start_frames, end_frames, recovery_end_frames
 
-def extract_stroke_segments(txt_path, waterline_y):
-    import pandas as pd
+import pandas as pd
+
+def extract_stroke_segments(txt_path, video_path):
     df = read_txt(txt_path)
-    (s1, e1), (s2, e2) = find_submerged_segments(df, waterline_y)
-    touch_frame = find_touch_frame(df)
-    return e1, s2, e2, touch_frame
-
-if __name__ == "__main__":
-    import sys
-
-    # 預設路徑
-    default_txt_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\demo\Excellent_20230414_breaststroke_F_3_1_smoothed.txt"
-    default_video_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\demo\Excellent_20230414_breaststroke_F_3.mp4"
-
-    if len(sys.argv) >= 3:
-        txt_path = sys.argv[1]
-        video_path = sys.argv[2]
-    else:
-        print("未提供參數，使用預設路徑")
-        txt_path = default_txt_path
-        video_path = default_video_path
-
-    # 自動偵測水面線 y 座標
     waterline_y = detect_waterline_y(video_path)
-
-    e1, s2, e2, touch_frame = extract_stroke_segments(txt_path, waterline_y)
     
-    range1 = (e1, s2)
-    range2 = (e2, touch_frame)
+    cap = cv2.VideoCapture(video_path)
+    v_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    cap.release()
     
-    frames1, wrist_x1, wrist_y1, elbow_y1, shoulder_y1, head_y1, stroke_angle1, propulsion_starts1, propulsion_ends1, recovery_ends1 = process_range(txt_path, range1, 'neg2pos')
-    frames2, wrist_x2, wrist_y2, elbow_y2, shoulder_y2, head_y2, stroke_angle2, propulsion_starts2, propulsion_ends2, recovery_ends2 = process_range(txt_path, range2, 'pos2neg')
+    (s1, e1), (s2, e2) = find_submerged_segments(df, waterline_y)
+    touch_frame = find_touch_frame(df,v_width)
+    return e1, s2, e2, touch_frame, waterline_y
 
-    print("\n[Range1 - Slope Neg → Pos]")
-    print("Propulsion Starts (black dashed lines):", propulsion_starts1)
-    print("Propulsion Ends   (blue dashed lines):", propulsion_ends1)
+# if __name__ == "__main__":
+#     import sys
 
-    print("\n[Range2 - Slope Pos → Neg]")
-    print("Propulsion Starts (black dotted lines):", propulsion_starts2)
-    print("Propulsion Ends   (blue dotted lines):", propulsion_ends2)
+#     # 預設路徑
+#     default_txt_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\demo\Excellent_20230414_breaststroke_F_3_1_smoothed.txt"
+#     default_video_path = r"D:\Kady\swimmer coco\anvanced stroke analysis\demo\Excellent_20230414_breaststroke_F_3.mp4"
+
+#     if len(sys.argv) >= 3:
+#         txt_path = sys.argv[1]
+#         video_path = sys.argv[2]
+#     else:
+#         print("未提供參數，使用預設路徑")
+#         txt_path = default_txt_path
+#         video_path = default_video_path
+
+#     # 自動偵測水面線 y 座標
+#     waterline_y = detect_waterline_y(video_path)
+
+#     e1, s2, e2, touch_frame = extract_stroke_segments(txt_path, waterline_y)
     
-    phase_frames_dict = {
-        'range1': {
-            "propulsion_starts": propulsion_starts1,
-            "propulsion_ends": propulsion_ends1,
-            "recovery_ends": recovery_ends1
-        },
-        'range2': {
-            "propulsion_starts": propulsion_starts2,
-            "propulsion_ends": propulsion_ends2,
-            "recovery_ends": recovery_ends2
+#     range1 = (e1, s2)
+#     range2 = (e2, touch_frame)
+    
+#     frames1, wrist_x1, wrist_y1, elbow_y1, shoulder_y1, head_y1, stroke_angle1, propulsion_starts1, propulsion_ends1, recovery_ends1 = process_range(txt_path, range1, 'neg2pos')
+#     frames2, wrist_x2, wrist_y2, elbow_y2, shoulder_y2, head_y2, stroke_angle2, propulsion_starts2, propulsion_ends2, recovery_ends2 = process_range(txt_path, range2, 'pos2neg')
+
+#     print("\n[Range1 - Slope Neg → Pos]")
+#     print("Propulsion Starts (black dashed lines):", propulsion_starts1)
+#     print("Propulsion Ends   (blue dashed lines):", propulsion_ends1)
+
+#     print("\n[Range2 - Slope Pos → Neg]")
+#     print("Propulsion Starts (black dotted lines):", propulsion_starts2)
+#     print("Propulsion Ends   (blue dotted lines):", propulsion_ends2)
+    
+#     phase_frames_dict = {
+#         'range1': {
+#             "propulsion_starts": propulsion_starts1,
+#             "propulsion_ends": propulsion_ends1,
+#             "recovery_ends": recovery_ends1
+#         },
+#         'range2': {
+#             "propulsion_starts": propulsion_starts2,
+#             "propulsion_ends": propulsion_ends2,
+#             "recovery_ends": recovery_ends2
+#         }
+#     }
+
+#     data_dict = load_data_dict_from_txt(txt_path, range1, range2)
+#     plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y)
+
+
+import os
+def run_analysis_for_folder(folder):
+    txt_files = [f for f in os.listdir(folder) if f.endswith("_1.txt")]
+
+    for txt_file in txt_files:
+        txt_path = os.path.join(folder, txt_file)
+        base_name = os.path.splitext(txt_file)[0].replace("_1", "")
+        video_path = os.path.join(folder, base_name + ".mp4")
+        output_txt = os.path.join(folder, base_name + ".a.txt")
+
+        if not os.path.exists(video_path):
+            print(f"⚠ 找不到影片 {video_path}, 跳過 {txt_file}")
+            continue
+
+        print(f"處理 {txt_file} 對應 {video_path}")
+
+        # --- 讀取影片和標註 ---
+        df = read_txt(txt_path)
+        waterline_y = detect_waterline_y(video_path)
+        cap = cv2.VideoCapture(video_path)
+        v_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        cap.release()
+
+        segments = find_submerged_segments(df, waterline_y)
+        if len(segments) < 2:
+            print(f"⚠ {txt_file} 潛泳段不足兩段，跳過")
+            continue
+        (s1, e1), (s2, e2) = segments
+
+        touch_frame = find_touch_frame(df, v_width)
+        if None in (e1, s2, e2, touch_frame):
+            print(f"⚠ {txt_file} 找不到完整階段，跳過")
+            continue
+
+        range1 = (e1, s2)
+        range2 = (e2, touch_frame)
+        if e1 >= s2 or e2 >= touch_frame:
+            print(f"⚠ {txt_file} 範圍不正確，跳過")
+            continue
+
+        frames1, wrist_x1, wrist_y1, elbow_y1, shoulder_y1, head_y1, stroke_angle1, propulsion_starts1, propulsion_ends1, recovery_ends1 = process_range(txt_path, range1, 'neg2pos')
+        frames2, wrist_x2, wrist_y2, elbow_y2, shoulder_y2, head_y2, stroke_angle2, propulsion_starts2, propulsion_ends2, recovery_ends2 = process_range(txt_path, range2, 'pos2neg')
+
+        phase_frames_dict = {
+            'range1': {"propulsion_starts": propulsion_starts1, "propulsion_ends": propulsion_ends1, "recovery_ends": recovery_ends1},
+            'range2': {"propulsion_starts": propulsion_starts2, "propulsion_ends": propulsion_ends2, "recovery_ends": recovery_ends2}
         }
-    }
 
-    data_dict = load_data_dict_from_txt(txt_path, range1, range2)
-    plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y)
+        data_dict = load_data_dict_from_txt(txt_path, range1, range2)
+        phase_results = plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y)
+
+        # 輸出
+        with open(output_txt, "w", encoding="utf-8") as f:
+            for key, regions in phase_results.items():
+                f.write(f"\n{key} Phase Frames:\n")
+                f.write(f"Propulsion regions: {regions['propulsion']}\n")
+                f.write(f"Recovery regions:   {regions['recovery']}\n")
+                f.write(f"Glide regions:      {regions['glide']}\n")
+
+        print(f"✅ 已輸出結果到 {output_txt}")
+
+
+
+# 假設這支是主程式
+if __name__ == "__main__":
+    folder = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\breaststroke"
+    run_analysis_for_folder(folder)
