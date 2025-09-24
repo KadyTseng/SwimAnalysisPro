@@ -5,7 +5,7 @@ import os, cv2
 from BD.pose_estimator import run_pose_estimation
 from BD.txt_base import process_keypoint_txt
 from BD.diving_analyzer_track_angles import analyze_diving_and_kicking
-from BD.stroke_style_recognizer import recognize_stroke_style
+from BD.stroke_style_recognizer import analyze_stroke
 
 from BD.stroke_counter.freestyle_counter import count_freestyle_strokes
 from BD.stroke_counter.breaststroke_counter import count_breaststroke_strokes
@@ -38,7 +38,14 @@ def run_full_analysis(model_path, video_path, output_dir):
     touch_frame = find_touch_frame(final_output_path)
 
     # Step 6: 判斷泳姿
-    stroke_style = recognize_stroke_style(final_output_path)
+    # 需要提供影片、骨架 txt、SVM 模型
+    stroke_label_int = analyze_stroke(video_path, final_output_path, "path/to/svm_model.pkl")
+
+    # 對應英文泳姿名稱
+    label_dict = {0: "backstroke", 1: "breaststroke", 2: "freestyle", 3: "butterfly"}
+    stroke_style = label_dict[stroke_label_int]
+
+    print("辨識泳姿:", stroke_style)
 
     # Step 7: 根據泳姿呼叫對應划手次數分析器
     if stroke_style == 'backstroke':
