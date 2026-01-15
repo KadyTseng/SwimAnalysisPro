@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 
+
 def process_keypoints_txt(
     input_txt: str,
     first_output: str = None,
@@ -9,7 +10,7 @@ def process_keypoints_txt(
     final_output: str = None,
     save_filtered: bool = False,
     save_first_output: bool = False,
-    save_final_output: bool = True
+    save_final_output: bool = True,
 ):
     """
     讀取 keypoints txt，清理異常點，補值內插並平滑。
@@ -29,7 +30,7 @@ def process_keypoints_txt(
     """
 
     # 讀取資料
-    with open(input_txt, 'r') as f:
+    with open(input_txt, "r") as f:
         lines = f.readlines()
 
     # 根據第一筆有資料的列決定欄位數量
@@ -59,24 +60,43 @@ def process_keypoints_txt(
     df = pd.DataFrame(data)
 
     # 建立欄位名稱
-    cols = ['frame_id', 'class', 'x_center', 'y_center', 'width', 'height', 'conf']
+    cols = ["frame_id", "class", "x_center", "y_center", "width", "height", "conf"]
     for i in range(1, 8):
-        cols += [f'kp{i}_x', f'kp{i}_y', f'kp{i}_conf']
+        cols += [f"kp{i}_x", f"kp{i}_y", f"kp{i}_conf"]
     df.columns = cols
 
     # === 儲存過濾異常值後的中繼檔案（可選）===
     if save_filtered and filtered_output is not None:
-        with open(filtered_output, 'w') as f:
+        with open(filtered_output, "w") as f:
             for _, row in df.iterrows():
-                row_str = ' '.join(
-                    str(int(v)) if df.columns[i] in ['frame_id', 'class'] else f"{v:.6f}"
+                row_str = " ".join(
+                    (
+                        str(int(v))
+                        if df.columns[i] in ["frame_id", "class"]
+                        else f"{v:.6f}"
+                    )
                     for i, v in enumerate(row)
                 )
-                f.write(row_str + '\n')
+                f.write(row_str + "\n")
         print(f"中繼檔儲存完成（過濾異常值後）: {filtered_output}")
 
     # === 處理關鍵點xy欄位異常值 ===
-    columns_to_check = [7, 8, 10, 11, 13, 14, 16, 17, 19, 20, 22, 23, 25, 26]  # 0-indexed
+    columns_to_check = [
+        7,
+        8,
+        10,
+        11,
+        13,
+        14,
+        16,
+        17,
+        19,
+        20,
+        22,
+        23,
+        25,
+        26,
+    ]  # 0-indexed
     for col_idx in columns_to_check:
         col_name = df.columns[col_idx]
 
@@ -92,22 +112,26 @@ def process_keypoints_txt(
         df.loc[diff_next > 50, col_name] = np.nan
 
     # === 補值內插 ===
-    df = df.interpolate(method='linear', limit_direction='both')
+    df = df.interpolate(method="linear", limit_direction="both")
 
     # === 儲存第一階段補值內插後的 TXT（可選）===
     if save_first_output and first_output is not None:
-        with open(first_output, 'w') as f:
+        with open(first_output, "w") as f:
             for _, row in df.iterrows():
-                row_str = ' '.join(
-                    str(int(v)) if df.columns[i] in ['frame_id', 'class'] else f"{v:.6f}"
+                row_str = " ".join(
+                    (
+                        str(int(v))
+                        if df.columns[i] in ["frame_id", "class"]
+                        else f"{v:.6f}"
+                    )
                     for i, v in enumerate(row)
                 )
-                f.write(row_str + '\n')
+                f.write(row_str + "\n")
         print(f"第一步清理完成，儲存為: {first_output}")
 
     # === 讀取補值內插後檔案，進行平滑 ===
     if first_output is not None:
-        df = pd.read_csv(first_output, sep='\s+', header=None)
+        df = pd.read_csv(first_output, sep="\s+", header=None)
         df.columns = list(range(df.shape[1]))
     else:
         # 若沒指定檔案，使用目前df
@@ -120,17 +144,20 @@ def process_keypoints_txt(
 
     # === 儲存第二階段平滑後的 TXT（可選）===
     if save_final_output and final_output is not None:
-        with open(final_output, 'w') as f:
+        with open(final_output, "w") as f:
             for _, row in df.iterrows():
-                row_str = ' '.join(
-                    str(int(val)) if i in [0, 1] else f"{val:.6f}" for i, val in enumerate(row)
+                row_str = " ".join(
+                    str(int(val)) if i in [0, 1] else f"{val:.6f}"
+                    for i, val in enumerate(row)
                 )
-                f.write(row_str + '\n')
+                f.write(row_str + "\n")
         print(f"第二步平滑完成，儲存為: {final_output}")
     else:
         final_output = None  # 防呆
 
     return final_output  # <<< 回傳檔案路徑給 orchestrator 或其他模組使用
+
+
 # DEMO
 # input_txt =r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\butterfly\Excellent_20230414_butterfly_M_3 (1).txt"
 # final_output = r"D:\Kady\swimmer coco\anvanced stroke analysis\stroke_stage\butterfly\Excellent_20230414_butterfly_M_3 (1)_1.txt"
@@ -140,27 +167,27 @@ def process_keypoints_txt(
 #     final_output=final_output,
 #     save_final_output=True
 # )
-# DEMO
-import os
+# # DEMO
+# import os
 
-def main():
-    folder = r"D:\Kady\swimmer coco\kick_data\new\women"
+# def main():
+#     folder = r"D:\Kady\swimmer coco\kick_data\new\women"
 
-    for fname in os.listdir(folder):
-        if fname.endswith(".txt") and not fname.endswith(".n.txt"):
-            input_txt = os.path.join(folder, fname)
+#     for fname in os.listdir(folder):
+#         if fname.endswith(".txt") and not fname.endswith(".n.txt"):
+#             input_txt = os.path.join(folder, fname)
 
-            # 輸出命名：在原本檔名加上 "_1"
-            base, ext = os.path.splitext(fname)
-            final_output = os.path.join(folder, base + "_1.txt")
+#             # 輸出命名：在原本檔名加上 "_1"
+#             base, ext = os.path.splitext(fname)
+#             final_output = os.path.join(folder, base + "_1.txt")
 
-            print(f"🚀 處理檔案: {input_txt}")
-            final_path = process_keypoints_txt(
-                input_txt=input_txt,
-                final_output=final_output,
-                save_final_output=True
-            )
-            print(f"✅ 輸出完成: {final_path}")
+#             print(f"🚀 處理檔案: {input_txt}")
+#             final_path = process_keypoints_txt(
+#                 input_txt=input_txt,
+#                 final_output=final_output,
+#                 save_final_output=True
+#             )
+#             print(f"✅ 輸出完成: {final_path}")
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

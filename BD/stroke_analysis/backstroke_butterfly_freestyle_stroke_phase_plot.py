@@ -1,22 +1,30 @@
+# SwimAnalysisPro/BD/stroke_analysis/backstroke_butterfly_freestyle_stroke_phase_plot.py
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import uniform_filter1d
+import streamlit as st
 
-def plot_phase_on_col11_col17(data_dict, intersection_dict, waterline_y, output_txt = None):
+
+@st.cache_data
+def plot_phase_on_col11_col17(
+    data_dict, intersection_dict, waterline_y, output_txt=None
+):
+    full_results = {}
+
     for key, values in data_dict.items():
         frames = np.array([v[0] for v in values])
         col10s = np.array([v[1] for v in values])
         col11s = np.array([v[2] for v in values])
         col16s = np.array([v[3] for v in values])
         col17s = np.array([v[4] for v in values])
-        hip_xs = np.array([float(v[5]) for v in values])   # 人位移
+        hip_xs = np.array([float(v[5]) for v in values])  # 人位移
         hip_start = hip_xs[0]
         distances = (hip_xs - hip_start) * (25 / 3840)
-        
+
         col10s_smooth = uniform_filter1d(col10s, size=10)
         col16s_smooth = uniform_filter1d(col16s, size=10)
 
-        direction = 'forward' if 'range1' in key else 'backward'
+        direction = "forward" if "range1" in key else "backward"
         intersection_frames = np.array(intersection_dict.get(key, []))
 
         # Recovery 區間
@@ -41,11 +49,11 @@ def plot_phase_on_col11_col17(data_dict, intersection_dict, waterline_y, output_
             if len(f_idx) == 0 or f_idx[0] + 3 >= len(frames):
                 continue
             idx = f_idx[0]
-            window_col10 = col10s_smooth[idx+1:idx+4]
-            window_col16 = col16s_smooth[idx+1:idx+4]
-            if direction == 'forward' and np.all(window_col16 > window_col10):
+            window_col10 = col10s_smooth[idx + 1 : idx + 4]
+            window_col16 = col16s_smooth[idx + 1 : idx + 4]
+            if direction == "forward" and np.all(window_col16 > window_col10):
                 push_starts.append(int(f))
-            elif direction == 'backward' and np.all(window_col16 < window_col10):
+            elif direction == "backward" and np.all(window_col16 < window_col10):
                 push_starts.append(int(f))
 
         if len(intersection_frames) > 0:
@@ -55,7 +63,9 @@ def plot_phase_on_col11_col17(data_dict, intersection_dict, waterline_y, output_
         push_regions = []
         for pf in push_starts:
             next_recovery_starts = [r[0] for r in recovery_regions if r[0] > pf]
-            push_end = next_recovery_starts[0] - 1 if next_recovery_starts else frames[-1]
+            push_end = (
+                next_recovery_starts[0] - 1 if next_recovery_starts else frames[-1]
+            )
             push_regions.append((pf, push_end))
 
         used_frames = set()
@@ -76,7 +86,7 @@ def plot_phase_on_col11_col17(data_dict, intersection_dict, waterline_y, output_
         if in_pull:
             pull_regions.append((pull_start, frames[-1]))
 
-        if 'range1' in key and push_regions:
+        if "range1" in key and push_regions:
             first_push_start = push_regions[0][0]
             invalid_recovery = [r for r in recovery_regions if r[0] < first_push_start]
             invalid_push = [p for p in push_regions if p[0] < first_push_start]
@@ -106,13 +116,16 @@ def plot_phase_on_col11_col17(data_dict, intersection_dict, waterline_y, output_
                     else:
                         merged.append((start, end))
             return merged
+
         push_regions = merge_regions(updated_push_regions)
         pull_regions = merge_regions(updated_pull_regions)
-                
+
         # === 合併區間，確保邊界連續重疊 ===
-        all_regions = [(s, e, "Pull") for s, e in pull_regions] + \
-                    [(s, e, "Push") for s, e in push_regions] + \
-                    [(s, e, "Recovery") for s, e in recovery_regions]
+        all_regions = (
+            [(s, e, "Pull") for s, e in pull_regions]
+            + [(s, e, "Push") for s, e in push_regions]
+            + [(s, e, "Recovery") for s, e in recovery_regions]
+        )
 
         # 依起點排序
         all_regions.sort(key=lambda x: x[0])
@@ -149,91 +162,128 @@ def plot_phase_on_col11_col17(data_dict, intersection_dict, waterline_y, output_
             with open(output_txt, "a", encoding="utf-8") as f:
                 f.write(output_text)
 
+        def plot_phase(fig_title, y_values, y_label):
+            fig, ax1 = plt.subplots(figsize=(15, 3))
+            ax1.plot(frames, y_values, label=y_label, color="black")
 
-                
-        # def plot_phase(fig_title, y_values, y_label):
-        #     fig, ax1 = plt.subplots(figsize=(15, 4))
-        #     ax1.plot(frames, y_values, label=y_label, color='black')
+            # --- 區段繪製邏輯 (axvspan) ---
+            labeled = set()
+            # 這裡需要將所有的 axvspan 邏輯移入，並確保 labeled set 邏輯正確
 
-        #     for start, end in recovery_regions:
-        #         ax1.axvspan(start, end, color='green', alpha=0.2, label='Recovery')
-        #     for start, end in push_regions:
-        #         ax1.axvspan(start, end, color='orange', alpha=0.4, label='Push')
-        #     for start, end in pull_regions:
-        #         ax1.axvspan(start, end, color='blue', alpha=0.2, label='Pull')
+            # --- 繪圖和註釋邏輯 (核心部分) ---
+            # 簡化：這裡將您提供的繪圖邏輯移入
 
-        #     stage_starts = [r[0] for r in recovery_regions + push_regions + pull_regions]
-        #     if frames[-1] not in stage_starts:
-        #         stage_starts.append(frames[-1])
-        #     stage_starts = sorted(set(stage_starts))
-        #     frame_to_hip_x = dict(zip(frames, hip_xs))
+            for start, end in recovery_regions:
+                ax1.axvspan(start, end, color="green", alpha=0.2, label="Recovery")
+            for start, end in push_regions:
+                ax1.axvspan(start, end, color="orange", alpha=0.4, label="Push")
+            for start, end in pull_regions:
+                ax1.axvspan(start, end, color="blue", alpha=0.2, label="Pull")
 
-        #     for i, f in enumerate(stage_starts):
-        #         if f in frame_to_hip_x:
-        #             delta_x = frame_to_hip_x[f] - hip_start
-        #             disp_m = abs(delta_x * (25 / 3840))
-        #             if i > 0:
-        #                 prev_f = stage_starts[i - 1]
-        #                 duration = (f - prev_f) / 30
-        #             else:
-        #                 duration = 0.0
-        #             label_text = f"{disp_m:.2f}m, {duration:.2f}s"
-        #             y_pos = np.interp(f, frames, y_values)
-        #             ax1.annotate(label_text, xy=(f, y_pos), xytext=(0, -20),
-        #                          textcoords="offset points", ha='center', fontsize=8,
-        #                          bbox=dict(boxstyle="round,pad=0.2", fc="yellow", alpha=0.3))
+            stage_starts = [
+                r[0] for r in recovery_regions + push_regions + pull_regions
+            ]
+            if frames[-1] not in stage_starts:
+                stage_starts.append(frames[-1])
+            stage_starts = sorted(set(stage_starts))
+            frame_to_hip_x = dict(zip(frames, hip_xs))
 
-        #     # 上方距離軸
-        #     ax2 = ax1.twiny()
-        #     ax2.set_xlim(ax1.get_xlim())
-        #     tick_positions = []
-        #     tick_labels = []
+            for i, f in enumerate(stage_starts):
+                if f in frame_to_hip_x:
+                    delta_x = frame_to_hip_x[f] - hip_start
+                    disp_m = abs(delta_x * (25 / 3840))
+                    if i > 0:
+                        prev_f = stage_starts[i - 1]
+                        duration = (f - prev_f) / 30
+                    else:
+                        duration = 0.0
+                    label_text = f"{disp_m:.2f}m, {duration:.2f}s"
+                    y_pos = np.interp(f, frames, y_values)
+                    ax1.annotate(
+                        label_text,
+                        xy=(f, y_pos),
+                        xytext=(0, -20),
+                        textcoords="offset points",
+                        ha="center",
+                        fontsize=8,
+                        bbox=dict(boxstyle="round,pad=0.2", fc="yellow", alpha=0.3),
+                    )
 
-        #     for i in range(1, len(stage_starts)):
-        #         start_f = stage_starts[i - 1]
-        #         end_f = stage_starts[i]
-        #         if start_f in frame_to_hip_x and end_f in frame_to_hip_x:
-        #             delta_x = frame_to_hip_x[end_f] - frame_to_hip_x[start_f]
-        #             segment_disp = abs(delta_x * (25 / 3840))
-        #             label = f"{segment_disp:.2f}m"
-        #             center_f = (start_f + end_f) // 2
-        #             tick_positions.append(center_f)
-        #             tick_labels.append(label)
+            # 上方距離軸
+            ax2 = ax1.twiny()
+            ax2.set_xlim(ax1.get_xlim())
+            tick_positions = []
+            tick_labels = []
 
-        #     # 不要用 ax2.set_xticklabels 顯示，先清空
-        #     ax2.set_xticks(tick_positions)
-        #     ax2.set_xticklabels([''] * len(tick_positions))
+            for i in range(1, len(stage_starts)):
+                start_f = stage_starts[i - 1]
+                end_f = stage_starts[i]
+                if start_f in frame_to_hip_x and end_f in frame_to_hip_x:
+                    delta_x = frame_to_hip_x[end_f] - frame_to_hip_x[start_f]
+                    segment_disp = abs(delta_x * (25 / 3840))
+                    label = f"{segment_disp:.2f}m"
+                    center_f = (start_f + end_f) // 2
+                    tick_positions.append(center_f)
+                    tick_labels.append(label)
 
-        #     # 手動加上文字（Pull 對應的往上移）
-        #     for i, center_f in enumerate(tick_positions):
-        #         label = tick_labels[i]
+            # 不要用 ax2.set_xticklabels 顯示，先清空
+            ax2.set_xticks(tick_positions)
+            ax2.set_xticklabels([""] * len(tick_positions))
 
-        #         # 判斷屬於哪個區段（Pull 的話要往上）
-        #         is_push = False
-        #         for (ps, pe) in push_regions:
-        #             if ps <= center_f <= pe:
-        #                 is_push = True
-        #                 break
+            # 手動加上文字（Pull 對應的往上移）
+            for i, center_f in enumerate(tick_positions):
+                label = tick_labels[i]
 
-        #         y_text = 1.05 if is_push else 1.01  # Pull 比其他的高
-        #         ax2.text(center_f, y_text, label, fontsize=8, ha='center', va='bottom',
-        #                 transform=ax2.get_xaxis_transform())
+                # 判斷屬於哪個區段（Pull 的話要往上）
+                is_push = False
+                for ps, pe in push_regions:
+                    if ps <= center_f <= pe:
+                        is_push = True
+                        break
 
-        #     ax2.set_xlabel("Segment Distance (m)", labelpad=20)
-            
-        #     ax1.set_xlabel('Frame')
-        #     ax1.set_ylabel(y_label)
-        #     ax1.set_title(f'{fig_title} - {key}', pad=30)
-        #     ax1.grid(True)
+                y_text = 1.05 if is_push else 1.01  # Pull 比其他的高
+                ax2.text(
+                    center_f,
+                    y_text,
+                    label,
+                    fontsize=8,
+                    ha="center",
+                    va="bottom",
+                    transform=ax2.get_xaxis_transform(),
+                )
 
-        #     plt.tight_layout()
-        #     plt.subplots_adjust(top=0.8)
+            ax2.set_xlabel("Segment Distance (m)", labelpad=20)
 
-        #     handles, labels = ax1.get_legend_handles_labels()
-        #     by_label = dict(zip(labels, handles))
-        #     ax1.legend(by_label.values(), by_label.keys(), fontsize=6)
+            ax1.set_xlabel("Frame")
+            ax1.set_ylabel(y_label)
+            # ax1.set_title(f"{fig_title} - {key}", pad=30)
+            ax1.grid(True)
 
-        #     plt.show()
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.8)
 
-        # plot_phase('Shoulder Y (col11)', col11s, 'Shoulder Y')
-        # plot_phase('Wrist Y (col17)', col17s, 'Wrist Y')
+            handles, labels = ax1.get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            ax1.legend(by_label.values(), by_label.keys(), fontsize=6)
+
+            # plt.show()
+            return fig  # <--- 返回 Matplotlib Figure 對象
+
+        # plot_phase("Shoulder Y (col11)", col11s, "Shoulder Y")
+        # plot_phase("Wrist Y (col17)", col17s, "Wrist Y")
+        shoulder_fig = plot_phase("Shoulder Y (col11) - Phases", col11s, "Shoulder Y")
+        wrist_fig = plot_phase("Wrist Y (col17) - Phases", col17s, "Wrist Y")
+
+        phase_data_for_return = {
+            "Pull regions": pull_regions,
+            "Recovery regions": recovery_regions,
+            "Push regions": push_regions,
+            "shoulder_fig": shoulder_fig,  # <--- 儲存 Shoulder 圖
+            "wrist_fig": wrist_fig,  # <--- 儲存 Wrist 圖
+        }
+        full_results[key] = phase_data_for_return
+
+    return full_results
+
+
+# 因Streamlit所以有修改
