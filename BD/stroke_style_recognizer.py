@@ -1,18 +1,19 @@
-# stroke_style_recognizer.py
+# BD/stroke_style_recognizer.py
 import pandas as pd
 import numpy as np
 import math
 from sklearn.preprocessing import StandardScaler
-from diving_analyzer_track_angles import get_diving_swimming_segments
+from .diving_analyzer_track_angles import get_diving_swimming_segments
 import joblib
 from collections import Counter
 
-def read_full_keypoints_txt(path, expected_cols=27):
+
+def read_full_keypoints_txt(path, expected_cols=28):
     """
     讀取完整骨架 txt，回傳 DataFrame
     """
     data = []
-    with open(path, 'r') as f:
+    with open(path, "r") as f:
         for line in f:
             parts = line.strip().split()
             if len(parts) >= expected_cols:
@@ -40,6 +41,7 @@ def calculate_signed_angle(A, B, C):
         angle_deg += 360
     return angle_deg
 
+
 def calculate_diving_kick_angles(df_diving):
     """
     計算潛泳段的髖–膝–踝角度 (frame by frame)，回傳 (角度序列, 平均角度)
@@ -65,6 +67,7 @@ def calculate_diving_kick_angles(df_diving):
     mean_angle = np.mean(angle_list) if angle_list else None
     return angle_list, mean_angle
 
+
 def split_segments(video_path, keypoints_txt_path):
     """
     1. 讀完整骨架 txt
@@ -84,16 +87,29 @@ def split_segments(video_path, keypoints_txt_path):
     waterline_y, (s1, e1), (s2, e2) = get_diving_swimming_segments(video_path, df_clean)
 
     # 潛泳段 (s1~e1)
-    df_diving = df_full[(df_full["frame_id"] >= s1) & (df_full["frame_id"] <= e1)].reset_index(drop=True)
+    df_diving = df_full[
+        (df_full["frame_id"] >= s1) & (df_full["frame_id"] <= e1)
+    ].reset_index(drop=True)
 
     # === 計算潛泳段踢腿角度 ===
     angle_list, mean_angle = calculate_diving_kick_angles(df_diving)
 
     # 游泳段 (e1~s2)
-    df_swimming = df_full[(df_full["frame_id"] >= e1) & (df_full["frame_id"] <= s2)].reset_index(drop=True)
+    df_swimming = df_full[
+        (df_full["frame_id"] >= e1) & (df_full["frame_id"] <= s2)
+    ].reset_index(drop=True)
 
     # 游泳段取出 7 個 y 座標
-    selected_cols = ["frame_id", "col8", "col11", "col14", "col17", "col20", "col23", "col26"]
+    selected_cols = [
+        "frame_id",
+        "col8",
+        "col11",
+        "col14",
+        "col17",
+        "col20",
+        "col23",
+        "col26",
+    ]
     df_swimming_selected = df_swimming[selected_cols].copy()
 
     # 標準化
@@ -102,7 +118,9 @@ def split_segments(video_path, keypoints_txt_path):
     coords_scaled = scaler.fit_transform(coords)
 
     df_swimming_normalized = pd.DataFrame(coords_scaled, columns=coords.columns)
-    df_swimming_normalized.insert(0, "frame_id", df_swimming_selected["frame_id"].values)
+    df_swimming_normalized.insert(
+        0, "frame_id", df_swimming_selected["frame_id"].values
+    )
 
     return waterline_y, df_diving, df_swimming_normalized, angle_list, mean_angle
 
@@ -148,16 +166,37 @@ def analyze_stroke(video_path, keypoints_txt_path, model_path):
     回傳最終泳姿類別 (0~3)
     """
     # 切段 + 潛泳踢腿角度 + 游泳段標準化
-    waterline_y, df_diving, df_swimming_normalized, angle_list, mean_angle = split_segments(
-        video_path, keypoints_txt_path
+    waterline_y, df_diving, df_swimming_normalized, angle_list, mean_angle = (
+        split_segments(video_path, keypoints_txt_path)
     )
 
     # 辨識泳姿
-    stroke_label = recognize_stroke_style(df_swimming_normalized, mean_angle, model_path)
+    stroke_label = recognize_stroke_style(
+        df_swimming_normalized, mean_angle, model_path
+    )
 
     return stroke_label
 
-label = analyze_stroke("demo_video.mp4", "skeleton.txt", "svm_model.pkl")    #  寫成一開始的路徑
 
-label_dict = {0: "backstroke", 1: "breaststroke", 2: "freestyle", 3: "butterfly"}
-print("最終辨識泳姿:", label_dict[label])
+# if __name__ == "__main__":
+#     # 這裡的程式碼只會在您直接運行此文件時執行，不會在 orchestrator 導入時執行。
+
+#     # 測試參數 (請替換為您實際可用的路徑)
+#     demo_video_path = "demo_video.mp4"
+#     demo_txt_path = "skeleton.txt"
+#     demo_model_path = "svm_model.pkl"
+
+#     # 數字到字串的轉換字典 (僅用於此測試)
+#     label_dict = {0: "backstroke", 1: "breaststroke", 2: "freestyle", 3: "butterfly"}
+
+#     try:
+#         label = analyze_stroke(demo_video_path, demo_txt_path, demo_model_path)
+#         # 輸出結果
+#         print("\n--- 泳姿辨識測試結果 ---")
+#         print("最終辨識泳姿:", label_dict[label])
+#         print("返回標籤 (數字):", label)
+
+#     except Exception as e:
+#         print(
+#             f"\n泳姿辨識測試失敗，請檢查 demo 檔案是否存在或 SVM 模型路徑是否正確。錯誤: {e}"
+#         )

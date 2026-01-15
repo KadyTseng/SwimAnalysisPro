@@ -1,7 +1,9 @@
+# BD/stroke_counter/backstroke_counter.py
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 from scipy.signal import argrelextrema
 import os
+
 
 def generate_smoothed_txt(final_output_path):
     """
@@ -10,11 +12,12 @@ def generate_smoothed_txt(final_output_path):
     並輸出同目錄下 final_output_hampel_uniform.txt，
     回傳新檔案路徑。
     """
+
     def hampel_filter(signal, window_size=50, n_sigmas=3):
         filtered = signal.copy()
         L = 1
         for i in range(window_size, len(signal) - window_size):
-            window = signal[i - window_size:i + window_size + 1]
+            window = signal[i - window_size : i + window_size + 1]
             median = np.median(window)
             std = L * np.median(np.abs(window - median))
             if np.abs(signal[i] - median) > n_sigmas * std:
@@ -22,7 +25,7 @@ def generate_smoothed_txt(final_output_path):
         return filtered
 
     # 讀檔 + 轉為 list of list
-    with open(final_output_path, 'r') as f:
+    with open(final_output_path, "r") as f:
         lines = [line.strip().split() for line in f if line.strip()]
 
     col11 = np.array([float(row[11]) for row in lines])
@@ -38,12 +41,14 @@ def generate_smoothed_txt(final_output_path):
 
     # 輸出路徑
     dir_path = os.path.dirname(final_output_path)
-    base_name = os.path.basename(final_output_path).replace('.txt', '_hampel_uniform.txt')
+    base_name = os.path.basename(final_output_path).replace(
+        ".txt", "_hampel_uniform.txt"
+    )
     smoothed_txt_path = os.path.join(dir_path, base_name)
 
-    with open(smoothed_txt_path, 'w') as f:
+    with open(smoothed_txt_path, "w") as f:
         for row in lines:
-            f.write(' '.join(row) + '\n')
+            f.write(" ".join(row) + "\n")
 
     return smoothed_txt_path
 
@@ -54,7 +59,7 @@ def find_touch_frame(file_path, threshold=2540):
     """
     max_frame = 0
     data = []
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         for line in f:
             parts = line.strip().split()
             if len(parts) < 5:
@@ -74,14 +79,14 @@ def find_touch_frame(file_path, threshold=2540):
     return None
 
 
-def filter_local_peaks(raw_indices, signal, waterline_y, min_gap=40, peak_type='max'):
+def filter_local_peaks(raw_indices, signal, waterline_y, min_gap=40, peak_type="max"):
     """
     篩選局部極大值或極小值，
     peak_type 可為 'max' 或 'min'，
     條件為峰值大於(或小於)水面水準線，
     且峰值間距大於 min_gap。
     """
-    if peak_type == 'max':
+    if peak_type == "max":
         condition = lambda v: v > waterline_y
     else:
         condition = lambda v: v < waterline_y
@@ -96,7 +101,9 @@ def filter_local_peaks(raw_indices, signal, waterline_y, min_gap=40, peak_type='
     return np.array(final_result)
 
 
-def count_backstroke_strokes(smoothed_txt_path, waterline_y, s1, e1, s2, e2, touch_frame):
+def count_backstroke_strokes(
+    smoothed_txt_path, waterline_y, s1, e1, s2, e2, touch_frame
+):
     """
     計算仰式划手次數與時間點，回傳格式：
     {
@@ -108,7 +115,7 @@ def count_backstroke_strokes(smoothed_txt_path, waterline_y, s1, e1, s2, e2, tou
     seam_ranges = [(570, 700), (1210, 1340), (1850, 1980)]
 
     # 讀入 txt
-    with open(smoothed_txt_path, 'r') as f:
+    with open(smoothed_txt_path, "r") as f:
         lines = [line.strip().split() for line in f if line.strip()]
 
     col11 = np.array([float(parts[11]) for parts in lines])
@@ -124,8 +131,8 @@ def count_backstroke_strokes(smoothed_txt_path, waterline_y, s1, e1, s2, e2, tou
     last_peaks = argrelextrema(last_col11, np.greater, order=40)[0] + e2
 
     # 篩選符合水下划手條件
-    middle_peaks = filter_local_peaks(middle_peaks, col11, waterline_y, peak_type='max')
-    last_peaks = filter_local_peaks(last_peaks, col11, waterline_y, peak_type='max')
+    middle_peaks = filter_local_peaks(middle_peaks, col11, waterline_y, peak_type="max")
+    last_peaks = filter_local_peaks(last_peaks, col11, waterline_y, peak_type="max")
 
     # 過濾最後段不合理划手：在最後一次肩膀浮出水面後的峰值需去除
     last_min = argrelextrema(last_col11, np.less, order=40)[0] + e2
@@ -138,7 +145,9 @@ def count_backstroke_strokes(smoothed_txt_path, waterline_y, s1, e1, s2, e2, tou
     used = set()
     filtered_last_peaks = []
     for start, end in seam_ranges:
-        in_seam = [idx for idx in last_peaks if start <= col10[idx] <= end and idx not in used]
+        in_seam = [
+            idx for idx in last_peaks if start <= col10[idx] <= end and idx not in used
+        ]
         if in_seam:
             keep = min(in_seam)
             filtered_last_peaks.append(keep)
@@ -150,14 +159,8 @@ def count_backstroke_strokes(smoothed_txt_path, waterline_y, s1, e1, s2, e2, tou
     last_peaks = sorted(filtered_last_peaks)
 
     return {
-        'middle': {
-            'frames': middle_peaks.tolist(),
-            'count': len(middle_peaks)
-        },
-        'last': {
-            'frames': last_peaks,
-            'count': len(last_peaks)
-        }
+        "middle": {"frames": middle_peaks.tolist(), "count": len(middle_peaks)},
+        "last": {"frames": last_peaks, "count": len(last_peaks)},
     }
 
 
