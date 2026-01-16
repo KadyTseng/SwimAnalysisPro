@@ -40,6 +40,9 @@ def load_data_dict_from_txt(txt_path, range1, range2):
 def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
     results = {}
     for key, values in data_dict.items():
+        if not values:
+            print(f"⚠️ Skipping {key}: No data values found.")
+            continue
         frames = np.array([v[0] for v in values])
         col11s = np.array([v[2] for v in values])  # shoulder Y
         col14s = np.array([v[4] for v in values])  # elbow Y
@@ -135,9 +138,11 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
                     ]
                 )
             )
-            last_stage_end = max(
-                [e for _, e in propulsion_regions + recovery_regions + glide_regions]
-            )
+            range_list = [e for _, e in propulsion_regions + recovery_regions + glide_regions]
+            if not range_list:
+                last_stage_end = frames[-1]
+            else:
+                last_stage_end = max(range_list)
             if last_stage_end not in stage_starts:
                 stage_starts.append(last_stage_end)
 
@@ -198,6 +203,16 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
             ax2.set_xlabel("Segment Distance (m)", labelpad=20)
             ax1.set_xlabel("Frame")
             ax1.set_ylabel(y_label)
+            
+            # Restrict X-axis to active swimming phases only
+            if stage_starts:
+                plot_min = min(stage_starts)
+                plot_max = max(stage_starts)
+                # Ensure we have a valid range
+                if plot_max > plot_min:
+                    padding = 5 # 5 frames padding
+                    ax1.set_xlim(plot_min - padding, plot_max + padding)
+
             # ax1.set_title(f"{fig_title} - {key}", pad=30)
             ax1.grid(True)
             plt.tight_layout()
