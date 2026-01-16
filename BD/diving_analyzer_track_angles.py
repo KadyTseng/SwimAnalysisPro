@@ -459,14 +459,25 @@ def analyze_diving_phase(
     # 🎯 修正要求: 如果 touch_frame 沒有偵測到，則用影片的總幀數表示
     if touch_frame is None:
         touch_frame = total_frames
-    # 6. 畫踢腿角度波型
+    # 6. Save Kick Angle Waveforms
+    import os
+    base_dir = os.path.dirname(keypoints_txt_path)
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    
+    fig1_path_rel = f"kick_angle_1_{base_name}.png"
+    fig1_path = os.path.join(base_dir, fig1_path_rel)
+    
     kick_angle_fig_1 = plot_kick_angle_waveform_with_lines_df(
         df_angles, keypoints_txt_path, s1, e1, "Phase 1", draw_aux_lines=False
     )
+    kick_angle_fig_1.savefig(fig1_path)
+    plt.close(kick_angle_fig_1)
 
-    kick_angle_fig_2 = None  # 初始化第二個圖形
+    kick_angle_fig_2_path = None
     if s2 is not None:
-        # *** 捕獲第二個圖形對象 ***
+        fig2_path_rel = f"kick_angle_2_{base_name}.png"
+        fig2_path = os.path.join(base_dir, fig2_path_rel)
+        
         kick_angle_fig_2 = plot_kick_angle_waveform_with_lines_df(
             df_angles,
             keypoints_txt_path,
@@ -476,6 +487,9 @@ def analyze_diving_phase(
             draw_aux_lines=True,
             crop_from_ankle_min=True,
         )
+        kick_angle_fig_2.savefig(fig2_path)
+        plt.close(kick_angle_fig_2)
+        kick_angle_fig_2_path = fig2_path
 
     return {
         "segments": largest_segments,
@@ -486,8 +500,8 @@ def analyze_diving_phase(
         "track_start_frame": s1,
         "track_end_frame": e1,  # 只畫第一段潛泳
         "touch_frame": touch_frame,
-        "kick_angle_fig_1": kick_angle_fig_1,
-        "kick_angle_fig_2": kick_angle_fig_2,  # 為了streamlit
+        "kick_angle_fig_1": fig1_path,
+        "kick_angle_fig_2": kick_angle_fig_2_path,  # Now returns path string or None
     }
 
 

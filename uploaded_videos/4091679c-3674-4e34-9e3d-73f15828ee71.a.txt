@@ -1,0 +1,10 @@
+
+range1 Phase Frames:
+Pull regions: [(1583, 1590)]
+Push regions: []
+Recovery regions: []
+
+range2 Phase Frames:
+Pull regions: [(3071, 3150)]
+Push regions: [(3055, 3062), (3150, 3197)]
+Recovery regions: [(3062, 3071), (3197, 3197)]

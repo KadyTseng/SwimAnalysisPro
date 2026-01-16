@@ -85,6 +85,8 @@ def split_segments(video_path, keypoints_txt_path):
 
     # 從 diving_analyzer_track_angles 取得水面與區段
     waterline_y, (s1, e1), (s2, e2) = get_diving_swimming_segments(video_path, df_clean)
+    
+    print(f"\n[DEBUG] Segments Identified -> Diving: {s1}-{e1}, Swimming: {e1}-{s2}")
 
     # 潛泳段 (s1~e1)
     df_diving = df_full[
@@ -98,6 +100,8 @@ def split_segments(video_path, keypoints_txt_path):
     df_swimming = df_full[
         (df_full["frame_id"] >= e1) & (df_full["frame_id"] <= s2)
     ].reset_index(drop=True)
+    
+    print(f"[DEBUG] Swimming Segment: {len(df_swimming)} frames found in range {e1}-{s2}.")
 
     # 游泳段取出 7 個 y 座標
     selected_cols = [
@@ -115,6 +119,13 @@ def split_segments(video_path, keypoints_txt_path):
     # 標準化
     scaler = StandardScaler()
     coords = df_swimming_selected.drop(columns=["frame_id"])
+    
+    print(f"[DEBUG] Coords for scaling shape: {coords.shape}")
+    
+    if coords.shape[0] == 0:
+        print("!! WARNING: Coords are empty. Skipping scaling.")
+        return waterline_y, df_diving, pd.DataFrame(), angle_list, mean_angle
+
     coords_scaled = scaler.fit_transform(coords)
 
     df_swimming_normalized = pd.DataFrame(coords_scaled, columns=coords.columns)

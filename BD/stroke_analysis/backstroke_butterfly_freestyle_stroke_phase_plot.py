@@ -12,6 +12,10 @@ def plot_phase_on_col11_col17(
     full_results = {}
 
     for key, values in data_dict.items():
+        if not values:
+            print(f"⚠️ Skipping {key}: No data values found.")
+            continue
+            
         frames = np.array([v[0] for v in values])
         col10s = np.array([v[1] for v in values])
         col11s = np.array([v[2] for v in values])
@@ -256,6 +260,19 @@ def plot_phase_on_col11_col17(
 
             ax1.set_xlabel("Frame")
             ax1.set_ylabel(y_label)
+
+            # Restrict X-axis to active swimming phases only
+            if stage_starts:
+                 # Filter out the fallback 'frames[-1]' if it's just padding
+                 # Actually, keeping it is fine, but we want to ensure we start at the first PHASE.
+                 # stage_starts contains starts of phases.
+                 plot_min = min(stage_starts)
+                 plot_max = max(stage_starts)
+                 
+                 if plot_max > plot_min:
+                     padding = 5
+                     ax1.set_xlim(plot_min - padding, plot_max + padding)
+
             # ax1.set_title(f"{fig_title} - {key}", pad=30)
             ax1.grid(True)
 

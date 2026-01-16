@@ -545,6 +545,7 @@ def run_full_analysis(
     ffmpeg_path,
     status_callback=None,
 ):
+    print(f"\n[ORCHESTRATOR] 🚀 STARTING ANALYSIS: {os.path.basename(video_path)}", flush=True)
     logging.info("--- Starting Full Analysis Process ---")
     logging.info(f"Input Video: {os.path.basename(video_path)}")
     logging.info(f"Output Directory: {output_dir}")
@@ -553,11 +554,15 @@ def run_full_analysis(
         os.makedirs(output_dir)
 
     # Step 1: Pose Estimation
+    print("[ORCHESTRATOR] 🔹 Step 1/7: Running Pose Estimation (YOLO)...", flush=True)
+    if status_callback: status_callback(10, "Step 1: Pose Estimation (YOLO)")
     logging.info("Step 1/7: Executing Pose Estimation (YOLOv11)...")
     video_out, txt_out = run_pose_estimation(pose_model_path, video_path, output_dir)
     logging.info(f"Raw Keypoints TXT generated at: {txt_out}")
 
     # Step 2: Keypoints Interpolation and Saving
+    print("[ORCHESTRATOR] 🔹 Step 2/7: Smoothing Keypoints...", flush=True)
+    if status_callback: status_callback(30, "Step 2: Smoothing Keypoints")
     logging.info("Step 2/7: Interpolating and smoothing keypoint data...")
 
     # --- Dynamic Filename Generation (using video_path) ---
@@ -573,6 +578,8 @@ def run_full_analysis(
     logging.info(f"Final smoothed data saved at: {final_output_path}")
 
     # Step 3: Underwater Dive and Kick Analysis (Get all results dict)
+    print("[ORCHESTRATOR] 🔹 Step 3/7: Analyzing Diving Phase & Turns...", flush=True)
+    if status_callback: status_callback(45, "Step 3: Diving & Kick Analysis")
     logging.info(
         "Step 3/7: Executing dive analysis, trajectory extraction, and wall touch detection..."
     )
@@ -607,15 +614,27 @@ def run_full_analysis(
     )
 
     # Step 4: Stroke Style Recognition
+    print("[ORCHESTRATOR] 🔹 Step 4/7: Recognizing Stroke Style...", flush=True)
+    if status_callback: status_callback(60, "Step 4: Stroke Style Recognition")
     logging.info("Step 4/7: Executing stroke style recognition...")
-    stroke_label_int = analyze_stroke(video_path, final_output_path, style_model_path)
+    try:
+        stroke_label_int = analyze_stroke(video_path, final_output_path, style_model_path)
+    except Exception as e:
+        print(f"[ORCHESTRATOR] ⚠️ Stroke Recognition Failed: {e}", flush=True)
+        # Default to Freestyle to prevent pipeline halt if strictly needed, or just let error bubble up?
+        # Given previous fixes, it handles '0 size' by returning default.
+        # Here we just log.
+        raise e
 
     # Map integer label to English stroke name
     label_dict = {0: "backstroke", 1: "breaststroke", 2: "freestyle", 3: "butterfly"}
-    stroke_style = label_dict[stroke_label_int]
+    stroke_style = label_dict.get(stroke_label_int, "freestyle")
     logging.info(f"Stroke Recognition Result: {stroke_style}")
+    print(f"[ORCHESTRATOR] 💡 Identified Style: {stroke_style.upper()}", flush=True)
 
     # Step 5: Stroke Phase Segmentation, Counting, and Waveform Generation
+    print("[ORCHESTRATOR] 🔹 Step 5/7: Phase Analysis & Waveform Generation...", flush=True)
+    if status_callback: status_callback(75, "Step 5: Stroke Analysis & Graphs")
     logging.info(
         "Step 5/7: Executing stroke phase segmentation and waveform generation..."
     )
@@ -717,15 +736,31 @@ def run_full_analysis(
             # intersection_dict 是我們在步驟二中回傳的 phase_data 鍵
             phase_data_plot = analysis_output["phase_data"]  # intersection_dict
 
-            # 4. Execute plotting
-            # 由於我們在步驟二中修改了 plot_phase_bbfs 的前置函式，這裡的調用保持不變
-            # stroke_plot_figs = plot_phase_bbfs(
-            #     # ❗️ 注意: 這裡的 plot_phase_bbfs 應使用 intersection_dict (即 analysis_output["phase_data"])
-            #     # 作為其第二個參數，而不是 full_phase_regions
-            #     data_bbfs,
-            #     phase_data_plot,
-            #     waterline_y,
-            # )
+            # 4. Extract Waveform Data (Wrist Y and Shoulder Y) from data_bbfs
+            # distinct for Range 1 and Range 2
+            # data_bbfs structure: (frame, col10, col11(Sh), col16, col17(Wr), col19)
+            stroke_plot_figs = {}
+            for r_key in ["range1", "range2"]:
+                dataset = data_bbfs.get(r_key, [])
+                regions = full_phase_regions.get(r_key, {}) # Valid due to previous extraction
+                
+                if dataset:
+                    frames = [d[0] for d in dataset]
+                    shoulder_y = [d[2] for d in dataset]
+                    wrist_y = [d[4] for d in dataset]
+                    
+                    stroke_plot_figs[f"{r_key}_shoulder"] = {
+                        "values": shoulder_y, 
+                        "frames": frames,
+                        "regions": regions
+                    }
+                    stroke_plot_figs[f"{r_key}_wrist"] = {
+                        "values": wrist_y, 
+                        "frames": frames,
+                        "regions": regions
+                    }
+
+            logging.info(f"Waveform data extraction complete for {stroke_style}")
 
             logging.info(
                 f"{stroke_style.capitalize()} count complete. Total strokes (Recovery-based): {stroke_result.get('total_count')}"
@@ -821,6 +856,7 @@ def run_full_analysis(
     logging.info(
         f"--- Process Complete! Processed video output at: {final_processed_video_path} ---"
     )
+    print(f"\n[ORCHESTRATOR] ✅ ANALYSIS COMPLETE! Video saved to: {final_processed_video_path}\n", flush=True)
 
     # --- Resource Cleanup ---
     try:
@@ -847,6 +883,7 @@ def run_full_analysis(
         "stroke_plot_figs": stroke_plot_figs,
         "kick_angle_fig_1": kick_angle_fig_1,
         "kick_angle_fig_2": kick_angle_fig_2,
+        "diving_analysis": diving_analysis_result,  # Add this line
     }
 
 

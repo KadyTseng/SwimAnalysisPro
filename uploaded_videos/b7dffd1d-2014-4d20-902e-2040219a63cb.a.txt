@@ -1,0 +1,10 @@
+
+range1 Phase Frames:
+Pull regions: [(1937, 1981)]
+Push regions: [(1981, 1983), (1984, 2039)]
+Recovery regions: [(1983, 1984), (2039, 2047)]
+
+range2 Phase Frames:
+Pull regions: [(2381, 2423), (2525, 2541), (2669, 2703)]
+Push regions: [(2423, 2510), (2541, 2663), (2703, 2839)]
+Recovery regions: [(2372, 2381), (2510, 2525), (2663, 2669)]
