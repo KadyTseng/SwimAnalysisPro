@@ -281,15 +281,34 @@ def build_interactive_angle_plot(angle_data: dict, fps: float = 30.0) -> Optiona
                     "phase": None,
                 }
             )
+            
+        if data_points:
+             print(f"[DEBUG] Angle Plot Data Range: Frames {data_points[0]['frame']}-{data_points[-1]['frame']}, Time {data_points[0]['timestamp_ms']:.1f}-{data_points[-1]['timestamp_ms']:.1f} ms")
+
+        phases_list = []
+        # Convert regions dict to list of dicts for frontend
+        for region_name, frame_ranges in regions.items():
+            for start_frame, end_frame in frame_ranges:
+                phases_list.append({
+                    "name": region_name,
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "color": "#ADD8E6" if "glide" in region_name.lower() else "#90EE90" # Example colors
+                })
 
         return {
             "title": "Kick Angle Analysis",
             "total_frames": len(frames),
             "fps": fps,
             "data_points": data_points,
+            "metadata": {
+                "minima": angle_data.get("minima", []),
+                "segment_metrics": angle_data.get("segment_metrics", []),
+            },
             "avg_angle": float(sum(angles) / len(angles)),
             "max_angle": float(max(angles)),
             "min_angle": float(min(angles)),
+
         }
 
     except Exception as e:
@@ -339,7 +358,12 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                 analysis_db[video_id]["progress"] = min(int(progress_value), 99)
                 if message:
                     analysis_db[video_id]["current_step"] = message
-                    logger.info(f"[{video_id}] 進度更新: {progress_value}% - {message}")
+                    
+                    # Enhanced Logging for Terminal Visibility
+                    log_msg = f"[{video_id}] 🏊 PROGRESS: {progress_value}% - {message}"
+                    logger.info(log_msg)
+                    # Force print to console for direct visibility
+                    print(f"\n[SERVER-LOG] 📢 {log_msg}\n", flush=True)
 
         # 呼叫核心分析函式
         results = await asyncio.to_thread(
@@ -356,23 +380,30 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
             raise Exception("run_full_analysis 回傳 None")
 
         # 格式化結果
-        # 計算 SPM (如果 orchestrator 沒回傳)
+        # 計算 SPM (優先使用 orchestrator 回傳值)
         stroke_res = results.get("stroke_result", {})
         total_strokes = stroke_res.get("total_count", 0)
-        spm = stroke_res.get("strokes_per_minute")
+        spm = results.get("spm")  # New key from orchestrator
+        if not spm:
+             spm = stroke_res.get("strokes_per_minute")
         
-        # 嘗試從 split_timing 獲取總游泳時間
-        total_swim_duration_sec = 0.0
-        split_data = results.get("split_timing", {}) or {}
-        splits = split_data.get("splits", [])
-        
-        if splits:
-            total_swim_duration_sec = sum(splits)
-        elif results.get("video_duration_sec"):
-             # Fallback: 使用影片總長度
-            total_swim_duration_sec = results.get("video_duration_sec")
+        # 嘗試從 split_timing獲取總游泳時間 (如果需要 fallback 計算)
+        # Note: passed/total_time are top-level in results now, but split_timing might also be populated?
+        # Actually orchestrator puts total_time in results['total_time']
+        total_swim_duration_sec = results.get("total_time") or 0.0
+        if isinstance(total_swim_duration_sec, str) and total_swim_duration_sec != "N/A":
+             total_swim_duration_sec = float(total_swim_duration_sec)
+        elif not isinstance(total_swim_duration_sec, (int, float)):
+             total_swim_duration_sec = 0.0
 
-        logger.info(f"DEBUG: Total Strokes={total_strokes}, Duration={total_swim_duration_sec}, Original SPM={spm}")
+        split_data = results.get("split_timing", {}) or {}
+        # Fallback duration from split_timing dict if not in top level
+        if total_swim_duration_sec == 0.0:
+            splits = split_data.get("splits", [])
+            if splits: total_swim_duration_sec = sum(splits)
+            elif results.get("video_duration_sec"): total_swim_duration_sec = results.get("video_duration_sec")
+
+        logger.info(f"DEBUG: Total Strokes={total_strokes}, Duration={total_swim_duration_sec}, Orchestrator SPM={spm}")
 
         if (spm is None or spm == 0) and total_swim_duration_sec > 0:
             spm = (total_strokes / (total_swim_duration_sec / 60))
@@ -415,13 +446,13 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                         if i < len(vals):
                             frame_idx = int(f)
                             # Determine Phase
-                            phase_lbl = "Glide/Other"
+                            phase_lbl = "Glide"
                             for p_start, p_end in regions.get("Pull regions", []):
                                 if p_start <= frame_idx <= p_end: phase_lbl = "Pull"; break
-                            if phase_lbl == "Glide/Other":
+                            if phase_lbl == "Glide":
                                 for p_start, p_end in regions.get("Push regions", []):
                                     if p_start <= frame_idx <= p_end: phase_lbl = "Push"; break
-                            if phase_lbl == "Glide/Other":
+                            if phase_lbl == "Glide":
                                 for p_start, p_end in regions.get("Recovery regions", []):
                                     if p_start <= frame_idx <= p_end: phase_lbl = "Recovery"; break
                             
@@ -432,62 +463,224 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                                 "phase": phase_lbl
                             })
                     
+                    # Determine drawing direction
+                    reverse_axis = ("decreasing" in range_key or "range1" in range_key)
+
+                    seg_metrics = plot_data.get("segment_metrics", [])
+                    logger.info(f"DEBUG: Stroke Plot {range_key} has {len(seg_metrics)} segment metrics.")
+
                     stroke_plot_figs[range_key] = {
-                        "plot_type": "angle",
+                        "plot_type": "phase",
                         "time_series": {
                             "title": range_key,
-                            "data_points": pts
+                            "data_points": pts,
+                            "metadata": {
+                                "segment_metrics": seg_metrics, # Pass metrics to frontend
+                                "reverse_axis": reverse_axis # Signal frontend to draw RTL
+                            }
                         },
                         "title": f"{range_key.replace('_',' ').title()}"
                     }
 
                 # 2. Legacy Phase Logic (e.g. Breaststroke)
+                # 2. Legacy Phase Logic (e.g. Breaststroke)
                 elif isinstance(plot_data, dict):
-                    # If phase_frames exists or if strict logic requires checking
-                    phase_data = plot_data.get("phase_frames")
-                    if phase_data: 
-                        phase_plot = build_interactive_phase_plot(
-                            phase_data_dict=phase_data,
-                            total_frames=plot_data.get("total_frames", 1000),
-                            fps=fps_val,
-                        )
-                        if phase_plot:
-                            stroke_plot_figs[range_key] = {
-                                "plot_type": "phase",
-                                "time_series": phase_plot,
-                                "plot_path": None,
-                                "title": f"Stroke Phases ({range_key})"
-                            }
+                    # Check for Rich Waveform Data (Breaststroke/Dynamic)
+                    if "values" in plot_data and "frames" in plot_data:
+                        frames = plot_data["frames"]
+                        logger.info(f"DEBUG-MAIN: Plot Data Keys: {list(plot_data.keys())}")
+                        if "regions" in plot_data and isinstance(plot_data['regions'], dict):
+                             logger.info(f"DEBUG-MAIN: Regions Dict Keys: {list(plot_data['regions'].keys())}")
+
+                        # Phase Mapping: Maps backend specific keys to standard Frontend Phases
+                        # Frontend standard: "Pull", "Push", "Recovery", "Glide"
+                        key_map = {
+                             "propulsion": "Pull",           # Breaststroke
+                             "Propulsion regions": "Pull",
+                             "Pull regions": "Pull",         # Back/Fly/Free
+                             "push": "Push",
+                             "Push regions": "Push",         # Back/Fly/Free
+                             "recovery": "Recovery",         # All
+                             "Recovery regions": "Recovery", # Back/Fly/Free
+                             "glide": "Glide",               # Breaststroke
+                             "Glide regions": "Glide"
+                        }
+
+                        for region_key, phase_name in key_map.items():
+                             # Check root level then 'regions' dict
+                             regs = plot_data.get(region_key)
+                             if not regs and "regions" in plot_data and isinstance(plot_data["regions"], dict):
+                                 regs = plot_data["regions"].get(region_key)
+                             
+                             if regs:
+                                 for (s, e) in regs:
+                                     # Range is inclusive [s, e]
+                                     for f in range(int(s), int(e)+1):
+                                         regions_map[f] = phase_name
+                        
+                        logger.info(f"DEBUG-MAIN: Mapped {len(regions_map)} frames to phases.")
+                        
+                        pts = []
+                        for i, f in enumerate(frames):
+                            if i < len(values):
+                                phase_lbl = regions_map.get(int(f), "Unknown")
+                                
+                                # FILTER: Only include points that match the identified stroke phases (from _a.txt)
+                                # This removes the initial "Diving/Streamline" gap which defaults to "Glide"
+                                if phase_lbl != "Unknown":
+                                    pts.append({
+                                        "frame": f,
+                                        "timestamp_ms": (f / fps_val) * 1000,
+                                        "value": float(values[i]),
+                                        "phase": phase_lbl
+                                    })
+                        
+                        stroke_plot_figs[range_key] = {
+                            "plot_type": "phase",
+                            "time_series": {
+                                "title": range_key,
+                                "data_points": pts,
+                                "metadata": {
+                                    "reverse_axis": ("decreasing" in range_key or "range1" in range_key)
+                                }
+                            },
+                             "title": f"{range_key.replace('_',' ').title()}"
+                        }
+                    
+                    else:
+                        # Fallback: Simple Phase Gantt (Old Logic)
+                        phase_data = plot_data.get("phase_frames")
+                        if phase_data: 
+                            phase_plot = build_interactive_phase_plot(
+                                phase_data_dict=phase_data,
+                                total_frames=plot_data.get("total_frames", 1000),
+                                fps=fps_val,
+                            )
+                            if phase_plot:
+                                 # Determine drawing direction (Legacy)
+                                reverse_axis = ("decreasing" in range_key or "range1" in range_key)
+                                # Inject into metadata
+                                if "metadata" not in phase_plot: phase_plot["metadata"] = {}
+                                phase_plot["metadata"]["reverse_axis"] = reverse_axis
+                                
+                                stroke_plot_figs[range_key] = {
+                                    "plot_type": "phase",
+                                    "time_series": phase_plot,
+                                    "plot_path": None,
+                                    "title": f"Stroke Phases ({range_key})"
+                                }
+
+        # === 適配：將 diving_analyzer 的新回傳格式轉換為這裡需要的結構 (包含踢腿角度序列與最小值) ===
+        if results.get("diving_analysis"):
+            da = results["diving_analysis"]
+            if "kick_angle_analysis" not in da:
+                da["kick_angle_analysis"] = {}
+
+            # Helper to extract minima
+            def _extract_minima(m_frames, m_vals):
+                minima_list = []
+                if m_frames is not None and m_vals is not None:
+                    # Assume they are lists (already converted in analyzer)
+                    for f, v in zip(m_frames, m_vals):
+                        minima_list.append({"frame": int(f), "value": float(v)})
+                return minima_list
+
+            # NEW: Dynamic Laps Data Processing
+            has_dynamic_data = False
+            if "laps_data" in da and da["laps_data"]:
+                for lap in da["laps_data"]:
+                    idx = lap.get("lap_index", 0)
+                    trend = lap.get("trend", "unknown")
+                    angle_data = lap.get("angle_data", {})
+                    
+                    # Key for frontend: consistent with stroke analysis
+                    key = f"lap{idx}_{trend}"
+                    
+                    if angle_data and angle_data.get("frames"):
+                        # Ensure we strictly use the frames provided in angle_data
+                        # which are restricted to the diving segment (s_d to e_d)
+                        da["kick_angle_analysis"][key] = {
+                            "frames": angle_data["frames"],
+                            "angles": angle_data["angles"],
+                            "regions": {}, # No specific regions for kick angle yet
+                            "segment_metrics": angle_data.get("segment_metrics", []),
+                            "minima": _extract_minima(
+                                angle_data.get("minima_frames"),
+                                angle_data.get("minima_values")
+                            )
+                        }
+                        has_dynamic_data = True
+                        print(f"[DEBUG-MAIN] Kick Angle Key {key}: Minima Count={len(da['kick_angle_analysis'][key].get('minima', []))}, Metrics Count={len(da['kick_angle_analysis'][key].get('segment_metrics', []))}")
+
+            # FALLBACK / LEGACY: Only run if no dynamic lap data was found
+            if not has_dynamic_data:
+                # Process Range 1 (Legacy)
+                if "kick_angle_series_1" in da:
+                    frames, angles = da["kick_angle_series_1"]
+                    min_frames, min_vals = da.get("min_angle_data_1", (None, None))
+                    if frames:
+                        da["kick_angle_analysis"]["range1"] = {
+                            "frames": frames,
+                            "angles": angles,
+                            "minima": _extract_minima(min_frames, min_vals)
+                        }
+    
+                # Process Range 2 (Legacy)
+                if "kick_angle_series_2" in da:
+                    frames, angles = da["kick_angle_series_2"]
+                    min_frames, min_vals = da.get("min_angle_data_2", (None, None))
+                    
+                    if frames:
+                        da["kick_angle_analysis"]["range2"] = {
+                            "frames": frames,
+                            "angles": angles,
+                            "minima": _extract_minima(min_frames, min_vals)
+                        }
+            
+            # Update results to ensure FullAnalysisResult includes this structured data
+            results["diving_analysis"] = da
 
         # 構建互動式踢腿角度圖表（支持動態更新）
         diving_plot_figs = {}
         if results.get("diving_analysis"):
             diving_analysis = results.get("diving_analysis", {})
+            kaa = diving_analysis.get("kick_angle_analysis", {})
 
-            # Range 1 踢腿角度
-            if diving_analysis.get("kick_angle_analysis", {}).get("range1"):
+            # Retrieve Real FPS for accurate timing
+            real_fps = 30.0
+            try:
+                # Attempt to get source video path from DB or results
+                source_video_path = analysis_db.get(video_id, {}).get("file_path")
+                if source_video_path and Path(source_video_path).exists():
+                    import cv2
+                    cap = cv2.VideoCapture(str(source_video_path))
+                    if cap.isOpened():
+                        fps_val = cap.get(cv2.CAP_PROP_FPS)
+                        if fps_val > 0:
+                            real_fps = fps_val
+                    cap.release()
+            except Exception as e:
+                logger.warning(f"Could not determine FPS from video, defaulting to 30.0: {e}")
+
+            # Dynamic Iteration over ALL keys in kick_angle_analysis
+            for key, data in kaa.items():
                 angle_plot = build_interactive_angle_plot(
-                    angle_data=diving_analysis["kick_angle_analysis"]["range1"],
-                    fps=30.0,
+                    angle_data=data,
+                    fps=real_fps,
                 )
                 if angle_plot:
-                    diving_plot_figs["range1"] = {
+                    title_clean = key.replace('_', ' ').title()
+                    
+                    # Determine drawing direction
+                    reverse_axis = ("decreasing" in key or "range1" in key)
+                    if "metadata" not in angle_plot: angle_plot["metadata"] = {}
+                    angle_plot["metadata"]["reverse_axis"] = reverse_axis
+
+                    diving_plot_figs[key] = {
                         "plot_type": "angle",
                         "time_series": angle_plot,
                         "plot_path": None,
-                    }
-
-            # Range 2 踢腿角度
-            if diving_analysis.get("kick_angle_analysis", {}).get("range2"):
-                angle_plot = build_interactive_angle_plot(
-                    angle_data=diving_analysis["kick_angle_analysis"]["range2"],
-                    fps=30.0,
-                )
-                if angle_plot:
-                    diving_plot_figs["range2"] = {
-                        "plot_type": "angle",
-                        "time_series": angle_plot,
-                        "plot_path": None,
+                        "title": f"Kick Angle ({title_clean})" 
                     }
 
         # 構建後製影片信息
@@ -511,25 +704,50 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
 
         # 計算 Avg Speed (如果 orchestrator 沒回傳)
         # split_data is already retrieved above
-        logger.info(f"DEBUG: Processing Split Data for Speed. Duration={total_swim_duration_sec}")
+        # 處理 Split Data (Avg Speed & Breakdowns)
+        # Use existing variable or re-fetch (orchestrator now returns key metrics directly)
+        split_data = results.get("split_timing") or split_data # Use what we had or refresh
         
-        if split_data is not None:
-             # Ensure Pydantic validation passes (must have 'splits')
-             if not split_data.get("splits"):
-                 split_data = None
+        # If no split_timing object, construct one from components
+        if not split_data and (results.get("avg_speed") or results.get("split_breakdown")):
+             split_data = {
+                 "splits": [], # Required field
+                 "metadata": {}
+             }
+             if total_swim_duration_sec > 0:
+                 split_data["splits"] = [total_swim_duration_sec]
 
         if split_data:
-            avg_speed_orig = split_data.get("average_speed")
-            if not avg_speed_orig and total_swim_duration_sec > 0:
-                # 假設標準池長 50m
-                num_splits = len(split_data.get("splits", []))
-                distance = 50.0 * (num_splits if num_splits > 0 else 1)
-                
-                avg_speed = distance / total_swim_duration_sec
-                split_data["average_speed"] = round(avg_speed, 2)
-                logger.info(f"DEBUG: Calculated Avg Speed={avg_speed} (Distance={distance})")
-            else:
-                 logger.info(f"DEBUG: Using Original Avg Speed={avg_speed_orig}")
+            # Inject Avg Speed
+            avg_spd = results.get("avg_speed")
+            if avg_spd:
+                 split_data["average_speed"] = round(avg_spd, 2)
+            elif "average_speed" not in split_data and total_swim_duration_sec > 0:
+                 # Legacy Fallback
+                 num_splits = len(split_data.get("splits", []))
+                 distance = 50.0 * (num_splits if num_splits > 0 else 1)
+                 split_data["average_speed"] = round(distance / total_swim_duration_sec, 2)
+            
+            # Inject Split Breakdown (for frontend display)
+            sb = results.get("split_breakdown")
+            if sb:
+                if "metadata" not in split_data: split_data["metadata"] = {}
+                split_data["metadata"]["split_breakdown"] = sb
+            
+            # Inject SPM Breakdown
+            spm_bd = results.get("spm_breakdown")
+            if spm_bd:
+                if "metadata" not in split_data: split_data["metadata"] = {}
+                split_data["metadata"]["spm_breakdown"] = spm_bd
+            
+            # Inject Strokes Breakdown into stroke_result metadata
+            strokes_bd = results.get("strokes_breakdown")
+            if strokes_bd:
+                if not stroke_result.metadata: 
+                    stroke_result.metadata = {}
+                stroke_result.metadata["strokes_breakdown"] = strokes_bd
+
+            logger.info(f"DEBUG: Final Split Data: {split_data}")
 
         full_result = FullAnalysisResult(
             video_id=video_id,
@@ -540,7 +758,7 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
             split_timing=split_data,
             stroke_plot_figs=stroke_plot_figs if stroke_plot_figs else None,
             diving_plot_figs=diving_plot_figs if diving_plot_figs else None,
-            focus_crop_video_path=results.get("focus_crop_video_path"),
+            focus_crop_video_path=results.get("focus_video_path"),
             postprocessing_info=postprocessing_info,
             timestamp=datetime.now().isoformat(),
             analysis_duration_seconds=(datetime.now() - start_time).total_seconds(),
@@ -634,8 +852,16 @@ async def upload_for_analysis(
       2. 分析完成後，呼叫 /analysis/{video_id}/result 取得結果
     """
     video_id = str(uuid4())
-    file_extension = Path(file.filename).suffix
-    file_path = UPLOAD_DIR / f"{video_id}{file_extension}"
+    # Use original filename to allow readable output filenames
+    original_filename = Path(file.filename).name
+    file_path = UPLOAD_DIR / original_filename
+
+    # If file exists, append timestamp to preserve uniqueness while keeping name readable
+    if file_path.exists():
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = Path(file.filename).stem
+        suffix = Path(file.filename).suffix
+        file_path = UPLOAD_DIR / f"{stem}_{timestamp_str}{suffix}"
 
     try:
         # 儲存檔案
@@ -650,6 +876,7 @@ async def upload_for_analysis(
             "progress": 0,
             "error_message": None,
             "result": None,
+            "current_step": "Initializing...",
             "created_at": datetime.now().isoformat(),
             "completed_at": None,
         }
@@ -859,20 +1086,23 @@ async def get_analysis_result(video_id: str) -> FullAnalysisResult:
 
 
 @app.get("/analysis/{video_id}/download")
-async def download_processed_video(video_id: str):
+async def download_processed_video(video_id: str, type: str = "processed"):
     """
     【功能 5】檔案下載 - 下載最終後製影片
 
     作用：
       - 提供最終後製的 MP4 影片供前端下載
+      - type='focus' 下載追焦影片
       - 自動設定正確的 HTTP header (Content-Disposition, Content-Type)
       - 串流傳輸大檔案 (不會一次載入記憶體)
 
     HTTP 方法：GET
-    端點：/analysis/{video_id}/download
+    端點：/analysis/{video_id}/download?type=processed
 
     路徑參數：
       video_id (str): 影片識別符
+    查詢參數：
+      type (str): "processed" (預設) 或 "focus"
 
     回傳：
       - Content-Type: video/mp4
@@ -888,18 +1118,6 @@ async def download_processed_video(video_id: str):
     錯誤狀態：
       - 404: 找不到影片或後製影片不存在
       - 409: 影片尚未完成分析
-
-    前端使用範例 (HTML):
-      <a href="/analysis/abc-123/download" download>下載後製影片</a>
-
-    前端使用範例 (JavaScript):
-      const response = await fetch(`/analysis/${videoId}/download`);
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `processed_${videoId}.mp4`;
-      a.click();
     """
     if video_id not in analysis_db:
         raise HTTPException(status_code=404, detail=f"找不到影片 ID: {video_id}")
@@ -911,16 +1129,22 @@ async def download_processed_video(video_id: str):
             detail=f"影片尚未完成分析 (狀態: {info['status']})",
         )
 
-    video_path = info["result"].processed_video_path
-    if not Path(video_path).exists():
+    if type == "focus":
+        video_path = info["result"].focus_crop_video_path
+        filename_prefix = "focus_"
+    else:
+        video_path = info["result"].processed_video_path
+        filename_prefix = "processed_"
+
+    if not video_path or not Path(video_path).exists():
         raise HTTPException(
             status_code=404,
-            detail=f"後製影片不存在: {video_path}",
+            detail=f"影片檔案不存在: {video_path} (Type: {type})",
         )
 
     return FileResponse(
         path=video_path,
-        filename=f"processed_{info['filename']}",
+        filename=f"{filename_prefix}{info['filename']}",
         media_type="video/mp4",
     )
 
@@ -1051,6 +1275,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=9001,
         reload=True,
     )

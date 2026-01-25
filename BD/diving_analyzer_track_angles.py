@@ -1,4 +1,4 @@
-# diving_analyzer_track_angles.py
+﻿# diving_analyzer_track_angles.py
 
 import numpy as np
 import pandas as pd
@@ -11,6 +11,7 @@ import streamlit as st
 def read_and_clean_txt(path, expected_cols=4):
     """
     讀取 keypoints txt ，只擷取 frame_id、bbox_x、bbox_y、頭部 y座標(col8)
+   肩膀(col11), 手肘(col14), 膝蓋(col23), 腳踝(col26), 手腕(col17), 髖關節(col19, 20)
     """
     data = []
     with open(path, "r") as f:
@@ -22,11 +23,18 @@ def read_and_clean_txt(path, expected_cols=4):
                     bbox_x = float(parts[2])
                     bbox_y = float(parts[3])
                     bbox_width = float(parts[4])
-                    col8 = float(parts[8])  # 頭y
-                    hip_x = float(parts[19])  # 髖關節 x
-                    hip_y = float(parts[20])  # 髖關節 y
+                    bbox_height = float(parts[5]) # 讀取 height
+                    col8 = float(parts[8])   # 頭y
+                    col11 = float(parts[11]) # 肩膀y
+                    col14 = float(parts[14]) # 手肘y
+                    col17 = float(parts[17]) # 手腕y
+                    hip_x = float(parts[19]) # 髖關節 x
+                    hip_y = float(parts[20]) # 髖關節 y
+                    col23 = float(parts[23]) # 膝蓋y
+                    col26 = float(parts[26]) # 腳踝y
+                    
                     data.append(
-                        (frame_id, bbox_x, bbox_y, bbox_width, col8, hip_x, hip_y)
+                        (frame_id, bbox_x, bbox_y, bbox_width, bbox_height, col8, col11, col14, col17, hip_x, hip_y, col23, col26)
                     )
                 except:
                     continue
@@ -37,9 +45,15 @@ def read_and_clean_txt(path, expected_cols=4):
             "bbox_x",
             "bbox_y",
             "width",
+            "height", # 新增 height column
             "col8",
+            "shoulder_y",
+            "elbow_y",
+            "wrist_y",
             "hip_x",
             "hip_y",
+            "knee_y",
+            "ankle_y"
         ],
     )
 
@@ -81,69 +95,201 @@ def detect_waterline_y(
         return None
 
 
-def find_largest_submerged_segments(df, waterline_y, top_n=2):
+def calculate_kick_segment_metrics(frames, hip_xs, min_frames, video_width=3840):
     """
-    修正後的版本：確保排序時使用的是數字相減
+    Calculate distance metrics between kick cycles (defined by local minima).
+    Only considers consecutive minima as a cycle.
     """
-
-    segments = []
-    current_segment = []
-    in_segment = False
-
-    # 🎯 2. 設定最小長度門檻 (過濾雜訊)
-    MIN_DIVE_LEN = 40
-
-    for i, row in df.iterrows():
-        frameid = row["frame_id"]
-        value = row["col8"]
-
-        if value >= waterline_y:
-            if not in_segment:
-                in_segment = True
-                # 這裡只存入 frameid 即可，不用存整個 tuple
-                current_segment = [frameid]
-            else:
-                current_segment.append(frameid)
-        else:
-            if in_segment:
-                # 🎯 3. 只有長度夠長的區段才存入
-                if len(current_segment) >= MIN_DIVE_LEN:
-                    # 存入起始幀與結束幀的 tuple
-                    segments.append((current_segment[0], current_segment[-1]))
-                in_segment = False
-                current_segment = []
-
-    # 處理結尾
-    if in_segment and len(current_segment) >= MIN_DIVE_LEN:
-        segments.append((current_segment[0], current_segment[-1]))
-
-    if not segments:
+    segment_metrics = []
+    
+    # Needs at least 2 minima to form a cycle
+    if not min_frames or len(min_frames) < 2:
         return []
 
-    # 🎯 4. 依照「幀數長度」排序，取最長的 top_n 段
-    # 現在 x[1] 和 x[0] 都是整數(幀號)，可以相減了
-    segments.sort(key=lambda x: x[1] - x[0], reverse=True)
-    largest_segments = segments[:top_n]
+    # Map frame to hip_x for quick lookup
+    # frames and hip_xs should be from the segment sub-dataframe
+    frame_to_hip_x = dict(zip(frames, hip_xs))
+    
+    # Sort minima by frame just in case
+    sorted_min_frames = sorted(min_frames)
+    
+    # Use dynamic width for scale factor
+    scale_factor = 25.0 / (video_width if video_width > 0 else 3840)
 
-    # 🎯 5. 最後按時間先後排序返回 (s1, e1) -> (s2, e2)
-    largest_segments.sort(key=lambda x: x[0])
+    for i in range(1, len(sorted_min_frames)):
+        start_f = int(sorted_min_frames[i-1])
+        end_f = int(sorted_min_frames[i])
+        
+        # Calculate Displacement
+        # Using A_x (Hip X)
+        if start_f in frame_to_hip_x and end_f in frame_to_hip_x:
+            start_x = frame_to_hip_x[start_f]
+            end_x = frame_to_hip_x[end_f]
+            
+            delta_pixels = abs(end_x - start_x)
+            dist_m = delta_pixels * scale_factor # Dynamic Scale
+            
+            label = f"{dist_m:.2f}m"
+            center_f = (start_f + end_f) / 2
+            
+            segment_metrics.append({
+                "label": label,
+                "start_frame": start_f,
+                "end_frame": end_f,
+                "center_frame": center_f,
+                "value": float(dist_m)
+            })
+            
+    return segment_metrics
 
-    return largest_segments
 
-
-def get_diving_swimming_segments(video_path, df, top_n=2):  # 之後top_n可以彈性
+def detect_laps_by_hip_x(df, min_lap_duration=100):
     """
-    從影片抓水面，並用骨架 df 找出潛泳/游泳區間。
+    根據 Hip X 的趨勢判斷折返 (Laps)。
+    假設：
+    - 去程 (Outbound): Hip X 數值顯著 減少 (或增加，視座標原點，但在這裡使用相對變化)
+    - 回程 (Inbound): Hip X 數值顯著 增加 (或減少)
+    
+    邏輯：
+    1. 平滑 Hip X。
+    2. 找出顯著的轉折點 (Local Min/Max)。轉折點代表觸牆/轉身。
+    3. 將影片分割成數個 Laps (Ranges)。
+    4. 判斷每個 Range 的趨勢 (X 變大或變小)。
+    
+    回傳: list of (start_frame, end_frame, trend_label)
+    """
+    # 1. 取出並平滑 Hip X
+    x_raw = df["hip_x"].values
+    if len(x_raw) < min_lap_duration:
+        return [(df["frame_id"].min(), df["frame_id"].max(), "unknown")]
+        
+    # 簡單移動平均平滑
+    window_size = 60 # 約 2秒
+    pad_width = window_size // 2
+    x_smooth = np.convolve(x_raw, np.ones(window_size)/window_size, mode='valid')
+    # 補回 padding 以對齊 frame_id
+    x_smooth = np.pad(x_smooth, (pad_width, len(x_raw) - len(x_smooth) - pad_width), mode='edge')
+    
+    # 2. 找轉折點 (Local Extrema)
+    # 使用較大的 order 避免划手造成的微小震盪被誤判
+    # order=90 表示前後 3秒內必須是極值
+    from scipy.signal import argrelextrema
+    order_val = 90
+    
+    # 找波峰 (Max) 和 波谷 (Min)
+    id_max = argrelextrema(x_smooth, np.greater, order=order_val)[0]
+    id_min = argrelextrema(x_smooth, np.less, order=order_val)[0]
+    # 合併所有轉折點並排序
+    turning_points = sorted(np.concatenate([id_max, id_min]).astype(int))
+    
+    # 加入起點 (0) 和 終點 (len-1)
+    boundary_points = [0, len(df)-1]
+    
+    # 過濾過於接近邊界的點
+    filtered_points = [0]
+    for p in turning_points:
+        if p > 30 and p < (len(df) - 30): # 避免開頭結尾的極值雜訊
+             # 避免與上一點太近
+             if p - filtered_points[-1] > min_lap_duration:
+                 filtered_points.append(p)
 
+    if (len(df)-1) - filtered_points[-1] > min_lap_duration:
+        filtered_points.append(len(df)-1)
+    else:
+        # 如果最後一段太短，直接把最後一點延伸到結尾
+        filtered_points[-1] = len(df)-1
+        
+    laps = []
+    frames = df["frame_id"].values
+    
+    for i in range(len(filtered_points) - 1):
+        idx_s = filtered_points[i]
+        idx_e = filtered_points[i+1]
+        
+        f_start = frames[idx_s]
+        f_end = frames[idx_e]
+        
+        # 判斷趨勢: 頭尾比較
+        x_s = x_smooth[idx_s]
+        x_e = x_smooth[idx_e]
+        diff = x_e - x_s
+        
+        # 設定一個閾值，沒有顯著移動就不算 Lap (可能是休息)
+        move_threshold = 200 # pixel
+        
+        trend = "static"
+        if diff < -move_threshold:
+            trend = "decreasing" # 數值變小 (去程?)
+        elif diff > move_threshold:
+            trend = "increasing" # 數值變大 (回程?)
+            
+        laps.append((f_start, f_end, trend))
+        
+    return laps
+
+
+def find_best_segment_in_range(df_subset, waterline_y, use_bbox=True):
+    """
+    在給定的時間區間內，找出「最佳」的一個潛泳段。
+    
     參數:
-        video_path: 影片路徑
-        df: 已整理好的骨架 DataFrame (frame_id, bbox_x, bbox_y, col8, hip_x, hip_y)
-        top_n: 取前 n 段潛泳連續區段
+        use_bbox: 
+            True  -> 使用 BBox 上緣 (較寬鬆/穩定)
+            False -> 使用 全關節(頭~腳)皆在水下 (嚴格檢查/Fallback)
+            
+    回傳: (start, end) or None
+    """
+    from itertools import groupby
+    from operator import itemgetter
+    
+    if df_subset.empty:
+        return None
 
+    if use_bbox:
+        # 策略 A: BBox 上緣 > 水面
+        condition = ((df_subset["bbox_y"] - df_subset["height"] / 2) > waterline_y)
+    else:
+        # 策略 B (Fallback): 嚴格全關節潛泳
+        condition = (
+            (df_subset["col8"] > waterline_y) &
+            (df_subset["shoulder_y"] > waterline_y) &
+            (df_subset["elbow_y"] > waterline_y) &
+            (df_subset["wrist_y"] > waterline_y) &
+            (df_subset["hip_y"] > waterline_y) &
+            (df_subset["knee_y"] > waterline_y) &
+            (df_subset["ankle_y"] > waterline_y)
+        )
+
+    valid_frames = df_subset[condition]["frame_id"].tolist()
+    if not valid_frames:
+        return None
+        
+    segments = []
+    MIN_DIVE_LEN = 10  # 稍微寬鬆一點，讓 Lap 內能抓到
+
+    for k, g in groupby(enumerate(valid_frames), lambda ix: ix[0] - ix[1]):
+        chunk = list(map(itemgetter(1), g))
+        if len(chunk) >= MIN_DIVE_LEN:
+            segments.append((chunk[0], chunk[-1]))
+            
+    if not segments:
+        return None
+            
+    # 取最長的一段
+    segments.sort(key=lambda x: x[1] - x[0], reverse=True)
+    return segments[0]
+
+
+
+def get_diving_swimming_segments(video_path, df, top_n=None): # top_n is deprecated but kept for compatibility
+    """
+    彈性多趟判斷：
+    1. 先偵測這數個 Laps (基於 Hip X 變化)
+    2. 對每個 Lap 找出最長的一段潛泳區間
+    
     回傳:
-        waterline_y: 水面水平線 y 座標
-        (s1, e1): 潛泳段第一段 (起始 frame, 結束 frame)
-        (s2, e2): 潛泳段第二段或游泳段 (起始 frame, 結束 frame)，若不存在回傳 None
+        waterline_y
+        segments: list of (s, e) tuples
     """
     cap = cv2.VideoCapture(video_path)
     ret, frame = cap.read()
@@ -155,17 +301,31 @@ def get_diving_swimming_segments(video_path, df, top_n=2):  # 之後top_n可以�
     if waterline_y is None:
         raise RuntimeError("水面偵測失敗")
 
-    segments = find_largest_submerged_segments(df, waterline_y, top_n=top_n)
+    # 1. Detect Laps
+    laps = detect_laps_by_hip_x(df)
+    
+    # 2. Find One Segment Per Lap
+    found_segments = []
+    
+    print(f"   [INFO] Detected {len(laps)} Laps (Ranges):")
+    for idx, (f_start, f_end, trend) in enumerate(laps):
+        print(f"     -> Lap {idx+1}: Frame {f_start}-{f_end} ({trend})")
+        
+        # 只處理有顯著移動的區段 (排除 static)
+        if trend == "static":
+            continue
+            
+        # 擷取該 Lap 的資料子集
+        df_lap = df[(df["frame_id"] >= f_start) & (df["frame_id"] <= f_end)]
+        
+        best_seg = find_best_segment_in_range(df_lap, waterline_y)
+        if best_seg:
+            found_segments.append(best_seg)
+            
+    # Sort by time just in case
+    found_segments.sort(key=lambda x: x[0])
 
-    if len(segments) >= 2:
-        (s1, e1), (s2, e2) = segments
-    elif len(segments) == 1:
-        (s1, e1) = segments[0]
-        s2, e2 = None, None
-    else:
-        s1, e1, s2, e2 = None, None, None, None
-
-    return waterline_y, (s1, e1), (s2, e2)
+    return waterline_y, found_segments
 
 
 def calculate_kick_angles_from_txt(file_path):
@@ -210,7 +370,7 @@ def calculate_kick_angles_from_txt(file_path):
     return df_angles
 
 
-def find_local_min_angles_df(df_angles, segment_start, segment_end, order=30):
+def find_local_min_angles_df(df_angles, segment_start, segment_end, order=15):
     """
     從踢腿角度 dataframe 中找出指定區段的局部最小值（角度波谷）
     """
@@ -225,7 +385,7 @@ def find_local_min_angles_df(df_angles, segment_start, segment_end, order=30):
         local_min_indices = argrelextrema(angles, np.less, order=order)[0]
     else:
         local_min_indices = np.array([], dtype=int)
-    filtered_indices = [i for i in local_min_indices if angles[i] <= 140]
+    filtered_indices = [i for i in local_min_indices if angles[i] <= 160]
 
     local_min_frames = frames[filtered_indices]
     local_min_angles = angles[filtered_indices]
@@ -397,7 +557,23 @@ def analyze_diving_phase(
     # waterline_y = 190
     # 2. 讀取簡版 keypoints
     df_clean = read_and_clean_txt(keypoints_txt_path)
-    largest_segments = find_largest_submerged_segments(df_clean, waterline_y)
+
+    # --- NEW: Lap-based Detection ---
+    laps = detect_laps_by_hip_x(df_clean)
+    largest_segments = []
+    print(f"   [INFO] Detected {len(laps)} Laps inside analysis:")
+    for i, (f_start, f_end, trend) in enumerate(laps):
+        print(f"     -> Lap {i+1}: {trend} ({f_start}-{f_end})")
+        if trend == "static":
+            continue
+        df_lap = df_clean[(df_clean["frame_id"] >= f_start) & (df_clean["frame_id"] <= f_end)]
+        # Find best segment in this lap
+        seg = find_best_segment_in_range(df_lap, waterline_y)
+        if seg:
+            largest_segments.append(seg)
+    largest_segments.sort(key=lambda x: x[0])
+    # --------------------------------
+
     # 檢查 segments 是否有效，避免索引錯誤
     if not largest_segments:
         # 如果 segments 為空，給出合理的預設值並返回
@@ -406,6 +582,8 @@ def analyze_diving_phase(
             "waterline_y": waterline_y,
             "min_angle_data_1": (None, None),
             "min_angle_data_2": (None, None),
+            "kick_angle_series_1": ([], []), # NEW
+            "kick_angle_series_2": ([], []), # NEW
             "df_hip_data": df_clean,
             "track_start_frame": None,
             "track_end_frame": None,
@@ -413,34 +591,150 @@ def analyze_diving_phase(
             "kick_angle_fig_1": None,
             "kick_angle_fig_2": None,
         }
-    # 3. 計算踢腿角度 dataframe
+    # 3. 計算踢腿角度 dataframe (全影片一次算完)
     df_angles = calculate_kick_angles_from_txt(keypoints_txt_path)
+    
+    # 4. 逐趟分析 (Per Lap Processing)
+    laps_data = []
 
-    # 4. 找局部最小值
-    s1, e1 = largest_segments[0]
-    s2, e2 = largest_segments[1] if len(largest_segments) > 1 else (None, None)
-    # === 新增：檢查 s1 腳踝 X 是否 < 3790，否則往後找 ===
+    # 為了繪圖 (只畫第一段去程潛泳)，我們需要收集所有的 segments 讓外部知道
+    all_diving_segments = []
+
+    # 讀取腳踝與髖關節數據 (用於距離/位移計算)
     keypoints = np.loadtxt(keypoints_txt_path)
-    frames_all = keypoints[:, 0].astype(int)
-    ankle_x_all = keypoints[:, 25]  # 腳踝 X
+    # k_frames_all = keypoints[:, 0].astype(int)
+    # k_ankle_x_all = keypoints[:, 25]
+    
+    for i, (l_start, l_end, trend) in enumerate(laps):
+        if trend == "static":
+            continue
+            
+        print(f"   [ANALYSIS] Processing Lap {i+1}: {trend} ({l_start}-{l_end})")
+        
+        # (A) 尋找潛泳段 (S, E)
+        df_lap = df_clean[(df_clean["frame_id"] >= l_start) & (df_clean["frame_id"] <= l_end)]
+        
+        # 優先嘗試：BBox 上緣判斷
+        div_seg = find_best_segment_in_range(df_lap, waterline_y, use_bbox=True)
+        
+        # 檢查是否需要 Fallback
+        # 條件 1: 沒找到潛泳段
+        # 條件 2: 找到潛泳段，但結束點 >= Lap 終點 (代表沒有游泳段，通常不合理)
+        need_fallback = False
+        if div_seg is None:
+            need_fallback = True
+            print(f"     -> [Check] No diving segment found with BBox method.")
+        elif div_seg[1] >= l_end - 5: # 保留一點緩衝，若潛泳幾乎佔滿整趟
+            need_fallback = True
+            print(f"     -> [Check] Diving segment covers entire lap (No Swim Phase). Unlikely.")
 
-    # 過濾出在 [s1, e1] 區段的幀
-    mask = (frames_all >= s1) & (frames_all <= e1)
-    frames_in_seg = frames_all[mask]
-    ankle_x_in_seg = ankle_x_all[mask]
+        # Fallback 機制: 改用全關節嚴格檢查
+        if need_fallback:
+            print(f"     -> [Fallback] Trying Strict Joints method...")
+            div_seg_strict = find_best_segment_in_range(df_lap, waterline_y, use_bbox=False)
+            
+            # 只有當嚴格模式有找到結果時才覆蓋
+            if div_seg_strict:
+                div_seg = div_seg_strict
+                print(f"     -> [Fallback] Success! Found segment using Strict Joints method: {div_seg}")
+            else:
+                 print(f"     -> [Fallback] Strict method also failed to find better segment.")
+                 # 若嚴格模式也沒找到，維持原本的結果 (可能是 None 或 全程潛泳)
+        
+        lap_result = {
+            "lap_index": i + 1,
+            "lap_range": (l_start, l_end),
+            "trend": trend,
+            "diving_segment": None,
+            "swimming_segment": None,
+            "angle_data": { 
+                "frames": [], 
+                "angles": [], 
+                "minima_frames": [], 
+                "minima_values": [],
+                "displacements": [] # 用於前端 X軸
+            }
+        }
+        
+        if div_seg:
+            s_d_raw, e_d = div_seg
+            
+            # --- USER REQUEST: Align Diving Start to Lap Start ---
+            # "前泳判斷 最後判斷完之後 潛泳的開頭都對齊LAP的開頭"
+            s_d = int(l_start)
+            print(f"     -> [Align] Forcing Diving Start {s_d_raw} -> Lap Start {s_d}")
 
-    # 找第一個 ankle_x < 3790 的幀
-    valid_idx = np.where(ankle_x_in_seg < 3790)[0]
-    if len(valid_idx) > 0:
-        s1 = frames_in_seg[valid_idx[0]]  # 更新 s1
+            # 原本針對 Lap 1 的檢查邏輯 (現在已被覆蓋，但保留結構以免副作用)
+            if i == 0 or trend == "decreasing": 
+                pass 
 
-    local_min_frames1, local_min_values1 = find_local_min_angles_df(df_angles, s1, e1)
-    if s2 is not None:
-        local_min_frames2, local_min_values2 = find_local_min_angles_df(
-            df_angles, s2, e2
-        )
-    else:
-        local_min_frames2, local_min_values2 = None, None
+
+            lap_result["diving_segment"] = (s_d, e_d)
+            all_diving_segments.append((s_d, e_d))
+            
+            # (B) 定義游泳段 (E, L_end)
+            if e_d < l_end:
+                lap_result["swimming_segment"] = (e_d, l_end)
+                
+            # (C) 角度與波型資料 (針對潛泳段)
+            # 取出該區段的角度
+            sub_angles = df_angles[(df_angles["frame_id"] >= s_d) & (df_angles["frame_id"] <= e_d)]
+            series_frames = sub_angles["frame_id"].tolist()
+            series_values = sub_angles["angle"].tolist()
+            
+            # 找局部最小值 (波谷)
+            min_frames, min_vals = find_local_min_angles_df(df_angles, s_d, e_d)
+            
+            # 簡單計算位移 (使用 Frame 數暫代，或需讀取 Hip X 做差值)
+            # Front-end usually needs relative distance. 
+            displacements = [x - s_d for x in series_frames]
+
+            # *** NEW: Calculate Segment Metrics (Kick Cycles) ***
+            # sub_angles has A_x (Hip X) as confirmed in calculate_kick_angles_from_txt
+            hip_xs = sub_angles["A_x"].tolist() 
+            seg_metrics = calculate_kick_segment_metrics(series_frames, hip_xs, min_frames, video_width=v_width)
+            print(f"     -> [DEBUG] Lap {i+1} Kick Metrics: {len(seg_metrics)} segments found. Data: {seg_metrics}")
+            
+            lap_result["angle_data"] = {
+                "frames": series_frames,
+                "angles": series_values,
+                "minima_frames": min_frames,
+                "minima_values": min_vals,
+                "displacements": displacements,
+                "segment_metrics": seg_metrics
+            }
+            
+            # 為了相容舊的 return 結構 (S1, S2)，將前兩趟寫入變數
+            # (這會在 loop 外處理)
+        
+        laps_data.append(lap_result)
+
+    # 準備回傳結構 (Flatten data for old logic compatibility, rich data for new)
+    # 取出 Lap 1 和 Lap 2 的潛泳數據填入舊欄位
+    s1, e1 = (None, None)
+    s2, e2 = (None, None)
+    
+    # 找第一個有 diving segment 的 lap
+    valid_laps = [L for L in laps_data if L["diving_segment"] is not None]
+    
+    series_frames_1, series_angles_1 = [], []
+    series_frames_2, series_angles_2 = [], []
+    min_data_1 = (None, None)
+    min_data_2 = (None, None)
+    
+    if len(valid_laps) > 0:
+        L1 = valid_laps[0]
+        s1, e1 = L1["diving_segment"]
+        series_frames_1 = L1["angle_data"]["frames"]
+        series_angles_1 = L1["angle_data"]["angles"]
+        min_data_1 = (L1["angle_data"]["minima_frames"], L1["angle_data"]["minima_values"])
+        
+    if len(valid_laps) > 1:
+        L2 = valid_laps[1]
+        s2, e2 = L2["diving_segment"]
+        series_frames_2 = L2["angle_data"]["frames"]
+        series_angles_2 = L2["angle_data"]["angles"]
+        min_data_2 = (L2["angle_data"]["minima_frames"], L2["angle_data"]["minima_values"])
 
     # 5. *** 整合觸牆偵測 (find_touch_frame 邏輯) ***
     threshold = v_width - 40
@@ -492,45 +786,294 @@ def analyze_diving_phase(
         kick_angle_fig_2_path = fig2_path
 
     return {
-        "segments": largest_segments,
+        "laps_data": laps_data, # NEW: Complete structure
+        "segments": all_diving_segments, # For main() compat
         "waterline_y": waterline_y,
-        "min_angle_data_1": (local_min_frames1, local_min_values1),
-        "min_angle_data_2": (local_min_frames2, local_min_values2),
+        "min_angle_data_1": min_data_1,
+        "min_angle_data_2": min_data_2,
+        "kick_angle_series_1": (series_frames_1, series_angles_1),
+        "kick_angle_series_2": (series_frames_2, series_angles_2),
         "df_hip_data": df_clean,
         "track_start_frame": s1,
-        "track_end_frame": e1,  # 只畫第一段潛泳
+        "track_end_frame": e1, 
         "touch_frame": touch_frame,
         "kick_angle_fig_1": fig1_path,
-        "kick_angle_fig_2": kick_angle_fig_2_path,  # Now returns path string or None
+        "kick_angle_fig_2": kick_angle_fig_2_path,
     }
 
 
-#  DEMO
-# analyze_diving_phase(
-#     video_path=r"D:\Kady\Pool_UI_processed\SwimAnalysisPro\temp_videos\real_time_picture (24).mp4",
-#     keypoints_txt_path=r"D:\Kady\Pool_UI_processed\SwimAnalysisPro\web_output\sessions\real_time_picture (24)_1.txt",
-#     output_video_path=None,
-# # )
 
-# if __name__ == "__main__":
-#     # --- 執行分析 ---
-#     result = analyze_diving_phase(
-#         video_path=r"D:\Kady\swimmer coco\1217_demo_debug\real_time_picture (24).mp4",
-#         keypoints_txt_path=r"D:\Kady\Pool_UI_processed\SwimAnalysisPro\web_output\sessions\real_time_picture (24)_1.txt",
-#         output_video_path=None,
-#     )
 
-# # --- Print 出我們關心的結果 ---
-# print("\n" + "=" * 50)
-# print("🎯 潛泳區段分析結果：")
+# ==========================================
+# BATCH TESTING & VISUALIZATION
+# ==========================================
+import sys
+import glob
+import os
 
-# segments = result.get("segments", [])
-# if segments:
-#     for idx, (s, e) in enumerate(segments):
-#         print(f"區段 {idx+1}: 起始幀 = {s}, 結束幀 = {e}, 總長度 = {e - s + 1} 幀")
-# else:
-#     print("❌ 未偵測到符合條件的潛泳區段。")
+# Helper to allow importing sibling modules when running standalone
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
-# print(f"\n📏 使用的水面高度 (Waterline Y): {result.get('waterline_y')}")
-# print(f"🏁 觸牆幀 (Touch Frame): {result.get('touch_frame')}")
-# print("=" * 50 + "\n")
+# Import dependencies (Lazy import inside check to avoid top-level failures if env issues)
+try:
+    from BD.pose_estimator import run_pose_estimation
+    from BD.txt_base import process_keypoints_txt
+except ImportError:
+    try:
+        from pose_estimator import run_pose_estimation
+        from txt_base import process_keypoints_txt
+    except ImportError as e:
+        print(f"Warning: Could not import Pose/Txt modules: {e}")
+
+def draw_multiple_segments_on_video(video_path, df, output_path, segments, line_color=(0, 0, 255), line_thickness=3):
+    """
+    Draws trajectories for multiple segments on the video.
+    segments: list of tuples [(s1, e1), (s2, e2), ...]
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Cannot open video: {video_path}")
+        return
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Try different codecs
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    if not out.isOpened():
+        print(f"Error: Cannot open video writer: {output_path}")
+        cap.release()
+        return
+
+    paths = [] 
+    current_path = []
+    
+    # Filter and sort segments
+    valid_segments = sorted([s for s in segments if s is not None and len(s) == 2], key=lambda x: x[0])
+    
+    def get_segment_index(f):
+        for i, (s, e) in enumerate(valid_segments):
+            if s <= f <= e:
+                return i
+        return -1
+    
+    frame_id = 0
+    last_seg_idx = -1
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        row = df[df["frame_id"] == frame_id]
+        current_seg_idx = get_segment_index(frame_id)
+        
+        if not row.empty and current_seg_idx != -1:
+            if "hip_x" in row.columns and "hip_y" in row.columns:
+                x = int(row["hip_x"].values[0])
+                y = int(row["hip_y"].values[0])
+                
+                # If segment changed, push current path and start new
+                if current_seg_idx != last_seg_idx:
+                     if current_path:
+                         paths.append(current_path)
+                         current_path = []
+                
+                current_path.append((x, y))
+                last_seg_idx = current_seg_idx
+        elif current_seg_idx == -1 and last_seg_idx != -1:
+            # Just exited a segment
+            if current_path:
+                paths.append(current_path)
+                current_path = []
+            last_seg_idx = -1
+            
+        # Draw past paths
+        for p in paths:
+            for i in range(len(p) - 1):
+                cv2.line(frame, p[i], p[i+1], line_color, line_thickness)
+        
+        # Draw current path
+        if current_path:
+            for i in range(len(current_path) - 1):
+                cv2.line(frame, current_path[i], current_path[i+1], line_color, line_thickness)
+        
+        # Overlay Info - REMOVED per user request
+        # info_text = f"Frame: {frame_id}"
+        # if current_seg_idx != -1:
+        #     s, e = valid_segments[current_seg_idx]
+        #     info_text += f" | Seg {current_seg_idx+1}: {s}-{e}"
+        #     cv2.rectangle(frame, (5, 5), (400, 40), (0,0,0), -1) 
+            
+        # cv2.putText(frame, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        out.write(frame)
+        frame_id += 1
+
+    cap.release()
+    out.release()
+    print(f"   -> Saved Trajectory Video: {os.path.basename(output_path)}")
+
+
+if __name__ == "__main__":
+    # --- USER SETTINGS ---
+    # INPUT_DIR: The folder containing MP4 videos to process
+    INPUT_DIR = r"D:\Kady\swimmer coco\anvanced stroke analysis\diving_stage\260107\N"  
+    
+    # MODEL_PATH: Path to the Pose Estimation Model
+    MODEL_PATH = r"D:\Kady\Pool_UI_processed\SwimAnalysisPro\data\models\best_1.pt"
+    # ---------------------
+
+    if len(sys.argv) > 1:
+        INPUT_DIR = sys.argv[1]
+
+    print(f"\n🚀 STARTING BATCH DIVING ANALYSIS")
+    print(f"📂 Target Directory: {INPUT_DIR}")
+    
+    if not os.path.exists(INPUT_DIR):
+        print(f"❌ Error: Directory does not exist: {INPUT_DIR}")
+        sys.exit(1)
+
+    # Find videos
+    video_files = glob.glob(os.path.join(INPUT_DIR, "*.mp4"))
+    # Exclude previously generated file artifacts
+    video_files = [
+        f for f in video_files 
+        if "trajectory" not in f 
+        and "processed" not in f 
+        and "focus" not in f
+        and "swimmer_plot" not in f
+    ]
+    
+    print(f"found {len(video_files)} videos.")
+    results = []
+
+    for video_path in video_files:
+        base_name = os.path.splitext(os.path.basename(video_path))[0]
+        folder = os.path.dirname(video_path)
+        print(f"\n🔹 Processing: {base_name}")
+        
+        # 1. Prepare Keypoints
+        final_txt_path = os.path.join(folder, f"{base_name}_1.txt")
+        raw_txt_path = os.path.join(folder, f"{base_name}.txt")
+        
+        has_keypoints = False
+        
+        if os.path.exists(final_txt_path):
+             print(f"   [OK] Found smoothed keypoints: {os.path.basename(final_txt_path)}")
+             has_keypoints = True
+        else:
+             print("   [..] Smoothed keypoints not found. Checking raw...")
+             if not os.path.exists(raw_txt_path):
+                 print("   [..] Raw keypoints not found. Running Pose Estimation...")
+                 try:
+                     # run_pose_estimation saves to {folder}/{base_name}.txt because output_dir=folder
+                     run_pose_estimation(MODEL_PATH, video_path, folder, save_video=False, save_txt=True)
+                 except Exception as e:
+                     print(f"   [ERROR] Pose Estimation Failed: {e}")
+            
+             if os.path.exists(raw_txt_path):
+                 print("   [..] Smoothing keypoints...")
+                 try:
+                     process_keypoints_txt(raw_txt_path, save_final_output=True, final_output=final_txt_path)
+                     has_keypoints = True
+                 except Exception as e:
+                     print(f"   [ERROR] Smoothing Failed: {e}")
+             else:
+                 print("   [ERROR] Could not generate keypoints.")
+
+        if not has_keypoints:
+            print("   [SKIP] Skipping video due to missing keypoints.")
+            continue
+            
+        # 2. Run Diving Analysis
+        try:
+            # Run the analysis function from THIS file
+            # analyze_diving_phase is defined in this file (diving_analyzer_track_angles_test.py)
+            # Make sure it's available in scope. Yes, it is defined above.
+            result_dict = analyze_diving_phase(video_path, final_txt_path)
+            
+            # Retrieve new structured data
+            laps_data = result_dict.get("laps_data", [])
+            segments = result_dict.get("segments", []) # kept for video drawing
+            df_hip = result_dict.get("df_hip_data") # RESTORED
+            waterline = result_dict.get("waterline_y")
+            
+            # Print detailed results to console
+            print(f"   [RESULT] Waterline: {waterline}")
+            for lap in laps_data:
+                idx = lap["lap_index"]
+                l_s, l_e = lap["lap_range"]
+                d_s, d_e = lap["diving_segment"] if lap["diving_segment"] else ("-", "-")
+                s_s, s_e = lap["swimming_segment"] if lap["swimming_segment"] else ("-", "-")
+                print(f"     -> Lap {idx} ({lap['trend']}): Total[{l_s}-{l_e}] | Dive[{d_s}-{d_e}] | Swim[{s_s}-{s_e}]")
+
+            # Prepare CSV Row
+            row_data = {
+                "Video": base_name,
+                "Waterline": waterline,
+                "Num_Laps": len(laps_data)
+            }
+            
+            # Flatten lap data -> Columns
+            for lap in laps_data:
+                i = lap["lap_index"]
+                l_s, l_e = lap["lap_range"]
+                
+                # Lap Range
+                row_data[f"Lap{i}_Start"] = l_s
+                row_data[f"Lap{i}_End"] = l_e
+                
+                # Diving Segment
+                if lap["diving_segment"]:
+                    row_data[f"Lap{i}_Dive_S"] = lap["diving_segment"][0]
+                    row_data[f"Lap{i}_Dive_E"] = lap["diving_segment"][1]
+                else:
+                    row_data[f"Lap{i}_Dive_S"] = None
+                    row_data[f"Lap{i}_Dive_E"] = None
+                    
+                # Swimming Segment
+                if lap["swimming_segment"]:
+                    row_data[f"Lap{i}_Swim_S"] = lap["swimming_segment"][0]
+                    row_data[f"Lap{i}_Swim_E"] = lap["swimming_segment"][1]
+                else:
+                    row_data[f"Lap{i}_Swim_S"] = None
+                    row_data[f"Lap{i}_Swim_E"] = None
+
+            results.append(row_data)
+            
+            # 3. Generate Trajectory Video
+            output_traj_path = os.path.join(folder, f"{base_name}_diving_trajectory.mp4")
+            if segments and df_hip is not None:
+                # 繪製所有偵測到的區段 (因為現在是 Per-Lap，很精準)
+                # USER REQUEST: 只畫第一趟去程的潛泳軌跡 (segments[:1])
+                draw_multiple_segments_on_video(video_path, df_hip, output_traj_path, segments[:1])
+            else:
+                print("   [INFO] No segments to draw.")
+                
+        except Exception as e:
+            print(f"   [ERROR] Analysis Phase Failed: {e}")
+            # import traceback
+            # traceback.print_exc()
+
+    # 4. Save Summary
+    if results:
+        summary_csv = os.path.join(INPUT_DIR, "diving_analysis_summary.csv")
+        try:
+            df_sum = pd.DataFrame(results)
+            df_sum.to_csv(summary_csv, index=False)
+            print(f"\n✅ Batch Analysis Complete. Summary saved to:\n   {summary_csv}")
+            print("\nPreview:")
+            print(df_sum.to_string())
+        except Exception as e:
+             print(f"Error saving csv: {e}")
+    else:
+        print("\n⚠️  No results to save.")

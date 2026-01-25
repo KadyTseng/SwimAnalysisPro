@@ -57,7 +57,8 @@ def run_pose_estimation(
     output_txt_path = None
 
     if save_txt:
-        output_txt_path = os.path.join(output_dir, f"{base_name}.txt")
+        # Save as _raw.txt to distinguish from final smoothed output
+        output_txt_path = os.path.join(output_dir, f"{base_name}_raw.txt")
         f_txt = open(output_txt_path, "w", encoding="utf-8")
     else:
         f_txt = None

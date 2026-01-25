@@ -68,41 +68,74 @@ def calculate_diving_kick_angles(df_diving):
     return angle_list, mean_angle
 
 
-def split_segments(video_path, keypoints_txt_path):
+def split_segments(video_path, keypoints_txt_path, laps_data=None):
     """
     1. 讀完整骨架 txt
-    2. 用精簡版 df 丟給 get_diving_swimming_segments
-    3. 切出潛泳段 (s1, e1) 和游泳段 (e1, s2)
-    4. 計算潛泳段髖–膝–踝平均角度
-    5. 游泳段再取出 7 個 y 座標並做標準化
+    2. 根據 laps_data 提取所有潛泳段與游泳段數據
+    3. 計算潛泳段髖–膝–踝平均角度
+    4. 游泳段再取出 7 個 y 座標並做標準化
     """
-    # 讀完整骨架
+    # 讀完整骨架 (需包含 col5 height)
     df_full = read_full_keypoints_txt(keypoints_txt_path)
-
-    # 建立精簡版 df，符合 diving_analyzer_track_angles 需求
-    df_clean = df_full[["frame_id", "col2", "col3", "col8", "col19", "col20"]].copy()
-    df_clean.columns = ["frame_id", "bbox_x", "bbox_y", "col8", "hip_x", "hip_y"]
-
-    # 從 diving_analyzer_track_angles 取得水面與區段
-    waterline_y, (s1, e1), (s2, e2) = get_diving_swimming_segments(video_path, df_clean)
     
-    print(f"\n[DEBUG] Segments Identified -> Diving: {s1}-{e1}, Swimming: {e1}-{s2}")
+    # 準備容器
+    df_diving_list = []
+    df_swimming_list = []
+    
+    if laps_data:
+        print(f"[DEBUG] Using provided laps_data with {len(laps_data)} laps.")
+        for lap in laps_data:
+            # 1. Diving Segment
+            div_seg = lap.get("diving_segment")
+            if div_seg and div_seg[0] is not None:
+                s, e = div_seg
+                # 篩選並複製數據
+                d_part = df_full[(df_full["frame_id"] >= s) & (df_full["frame_id"] <= e)].copy()
+                df_diving_list.append(d_part)
+                
+            # 2. Swimming Segment
+            swim_seg = lap.get("swimming_segment")
+            if swim_seg and swim_seg[0] is not None:
+                s, e = swim_seg
+                s_part = df_full[(df_full["frame_id"] >= s) & (df_full["frame_id"] <= e)].copy()
+                df_swimming_list.append(s_part)
+    else:
+        # Fallback: 使用舊邏輯 (只取第一趟)
+        # 建立精簡版 df
+        df_clean = df_full[["frame_id", "col2", "col3", "col5", "col8", "col19", "col20"]].copy()
+        df_clean.columns = ["frame_id", "bbox_x", "bbox_y", "height", "col8", "hip_x", "hip_y"]
 
-    # 潛泳段 (s1~e1)
-    df_diving = df_full[
-        (df_full["frame_id"] >= s1) & (df_full["frame_id"] <= e1)
-    ].reset_index(drop=True)
+        waterline_y, segments = get_diving_swimming_segments(video_path, df_clean)
+        
+        # Unpack segments safely
+        s1, e1 = segments[0] if len(segments) > 0 else (0, 0)
+        s2, e2 = segments[1] if len(segments) > 1 else (0, 0)
+        
+        # 潛泳段 (s1~e1)
+        if s1 < e1:
+            df_diving_list.append(df_full[(df_full["frame_id"] >= s1) & (df_full["frame_id"] <= e1)])
+            
+        # 游泳段 (e1~s2)
+        if e1 < s2:
+             df_swimming_list.append(df_full[(df_full["frame_id"] >= e1) & (df_full["frame_id"] <= s2)])
+
+    # 合併數據
+    if df_diving_list:
+        df_diving = pd.concat(df_diving_list, ignore_index=True)
+    else:
+        df_diving = pd.DataFrame()
+        
+    if df_swimming_list:
+        df_swimming = pd.concat(df_swimming_list, ignore_index=True)
+    else:
+        df_swimming = pd.DataFrame()
+
+    print(f"[DEBUG] Total Diving Frames: {len(df_diving)}, Total Swimming Frames: {len(df_swimming)}")
 
     # === 計算潛泳段踢腿角度 ===
     angle_list, mean_angle = calculate_diving_kick_angles(df_diving)
 
-    # 游泳段 (e1~s2)
-    df_swimming = df_full[
-        (df_full["frame_id"] >= e1) & (df_full["frame_id"] <= s2)
-    ].reset_index(drop=True)
-    
-    print(f"[DEBUG] Swimming Segment: {len(df_swimming)} frames found in range {e1}-{s2}.")
-
+    # 游泳段標準化
     # 游泳段取出 7 個 y 座標
     selected_cols = [
         "frame_id",
@@ -114,17 +147,20 @@ def split_segments(video_path, keypoints_txt_path):
         "col23",
         "col26",
     ]
+    
+    # 檢查欄位是否存在 (避免空 df 報錯)
+    if df_swimming.empty:
+         return None, df_diving, pd.DataFrame(), angle_list, mean_angle
+
     df_swimming_selected = df_swimming[selected_cols].copy()
 
     # 標準化
     scaler = StandardScaler()
     coords = df_swimming_selected.drop(columns=["frame_id"])
     
-    print(f"[DEBUG] Coords for scaling shape: {coords.shape}")
-    
     if coords.shape[0] == 0:
         print("!! WARNING: Coords are empty. Skipping scaling.")
-        return waterline_y, df_diving, pd.DataFrame(), angle_list, mean_angle
+        return None, df_diving, pd.DataFrame(), angle_list, mean_angle
 
     coords_scaled = scaler.fit_transform(coords)
 
@@ -133,7 +169,7 @@ def split_segments(video_path, keypoints_txt_path):
         0, "frame_id", df_swimming_selected["frame_id"].values
     )
 
-    return waterline_y, df_diving, df_swimming_normalized, angle_list, mean_angle
+    return None, df_diving, df_swimming_normalized, angle_list, mean_angle
 
 
 def recognize_stroke_style(df_swimming_normalized, mean_kick_angle, model_path: str):
@@ -168,20 +204,24 @@ def recognize_stroke_style(df_swimming_normalized, mean_kick_angle, model_path: 
     return final_label
 
 
-def analyze_stroke(video_path, keypoints_txt_path, model_path):
+def analyze_stroke(video_path, keypoints_txt_path, model_path, laps_data=None):
     """
     完整流程：
-    1. 切分潛泳段與游泳段
+    1. 根據 laps_data (若有) 提取潛泳段與游泳段
     2. 計算潛泳踢腿角度
     3. 辨識游泳段泳姿 (SVM + 平均踢腿角度)
     回傳最終泳姿類別 (0~3)
     """
     # 切段 + 潛泳踢腿角度 + 游泳段標準化
-    waterline_y, df_diving, df_swimming_normalized, angle_list, mean_angle = (
-        split_segments(video_path, keypoints_txt_path)
+    _, df_diving, df_swimming_normalized, angle_list, mean_angle = (
+        split_segments(video_path, keypoints_txt_path, laps_data)
     )
 
     # 辨識泳姿
+    if df_swimming_normalized.empty:
+        print("[WARNING] No swimming data found for stroke recognition. Defaulting to Freestyle.")
+        return 2 # Default Freestyle
+        
     stroke_label = recognize_stroke_style(
         df_swimming_normalized, mean_angle, model_path
     )

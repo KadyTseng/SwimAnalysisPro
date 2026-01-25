@@ -33,31 +33,38 @@ class _AnalysisProgressScreenState extends State<AnalysisProgressScreen> {
   }
 
   void _startPolling() {
-    _timer = Timer.periodic(Duration(seconds: 2), (timer) async {
-      try {
-        final statusResponse = await _apiService.checkStatus(widget.videoId);
-        
-        if (mounted) {
-          setState(() {
-            _progress = (statusResponse.progress ?? 0) / 100.0;
-            _statusMessage = 'Status: ${statusResponse.status}\nProgress: ${(statusResponse.progress ?? 0)}%';
-          });
-        }
-
-        if (statusResponse.status == 'completed') {
-          timer.cancel();
-          _fetchAndNavigateToResult();
-        } else if (statusResponse.status == 'failed') {
-          timer.cancel();
-          setState(() {
-            _hasError = true;
-            _statusMessage = 'Analysis Failed: ${statusResponse.errorMessage}';
-          });
-        }
-      } catch (e) {
-        print('Polling error: $e');
-      }
+    print('🔄 AnalysisProgressScreen: Polling started for ${widget.videoId}');
+    _checkStatus(); // Run immediately
+    _timer = Timer.periodic(Duration(seconds: 2), (timer) {
+      _checkStatus();
     });
+  }
+
+  Future<void> _checkStatus() async {
+    try {
+      final statusResponse = await _apiService.checkStatus(widget.videoId);
+      
+      if (!mounted) return;
+
+      setState(() {
+        _progress = (statusResponse.progress ?? 0) / 100.0;
+        String stepInfo = statusResponse.currentStep ?? '';
+        _statusMessage = 'Status: ${statusResponse.status}\n$stepInfo\nProgress: ${(statusResponse.progress ?? 0)}%';
+      });
+
+      if (statusResponse.status == 'completed') {
+        _timer?.cancel();
+        _fetchAndNavigateToResult();
+      } else if (statusResponse.status == 'failed') {
+        _timer?.cancel();
+        setState(() {
+          _hasError = true;
+          _statusMessage = 'Analysis Failed: ${statusResponse.errorMessage}';
+        });
+      }
+    } catch (e) {
+      print('Polling error: $e');
+    }
   }
 
   Future<void> _fetchAndNavigateToResult() async {

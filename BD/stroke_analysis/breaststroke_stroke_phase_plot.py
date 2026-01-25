@@ -5,6 +5,22 @@ from scipy.ndimage import uniform_filter1d
 import streamlit as st
 
 
+import json
+
+class NumpyEncoder(json.JSONEncoder):
+    """ Special json encoder for numpy types """
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32,
+                              np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+
 def load_data_dict_from_txt(txt_path, range1, range2):
     def parse_line(line):
         parts = line.strip().split()
@@ -36,8 +52,9 @@ def load_data_dict_from_txt(txt_path, range1, range2):
     return data_dict
 
 
-@st.cache_data
-def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
+import json
+
+def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None, output_txt=None):
     results = {}
     for key, values in data_dict.items():
         if not values:
@@ -93,6 +110,10 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
             "propulsion": propulsion_regions,
             "recovery": recovery_regions,
             "glide": glide_regions,
+            "frames": frames.tolist(),
+            "values_shoulder": col11s.tolist(),
+            "values_wrist": col17s.tolist(),
+            "values": col17s.tolist(), # Default Primary
         }
 
         print(f"\n{key} Phase Frames:")
@@ -167,9 +188,10 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
 
             ax2 = ax1.twiny()
             ax2.set_xlim(ax1.get_xlim())
+            # *** Calculate Segment Metrics for Frontend ***
+            segment_metrics = []
             tick_positions = []
             tick_labels = []
-
             for i in range(1, len(stage_starts)):
                 start_f = stage_starts[i - 1]
                 end_f = stage_starts[i]
@@ -177,7 +199,15 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
                     delta_x = frame_to_hip_x[end_f] - frame_to_hip_x[start_f]
                     segment_disp = abs(delta_x * (25 / 3840))
                     label = f"{segment_disp:.2f}m"
-                    center_f = (start_f + end_f) // 2
+                    center_f = (start_f + end_f) / 2 # Float for precision
+                    
+                    segment_metrics.append({
+                        "label": label,
+                        "start_frame": int(start_f),
+                        "end_frame": int(end_f),
+                        "center_frame": center_f,
+                        "value": float(segment_disp)
+                    })
                     tick_positions.append(center_f)
                     tick_labels.append(label)
 
@@ -222,16 +252,14 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
             by_label = dict(zip(labels, handles))
             ax1.legend(by_label.values(), by_label.keys(), fontsize=6)
             # plt.show()
-            return (
-                fig  # Streamlit 需要一個 matplotlib.figure 對象作為參數傳入 st.pyplot()
-            )
+            return fig, segment_metrics  # Streamlit 需要一個 matplotlib.figure 對象作為參數傳入 st.pyplot()
 
         # plot_phase("Shoulder Y - Breaststroke Phases", col11s_smooth, "Shoulder Y")
         # plot_phase("Wrist Y - Breaststroke Phases", col17s_smooth, "Wrist Y")
-        shoulder_fig = plot_phase(
+        shoulder_fig, _ = plot_phase(
             "Shoulder Y - Breaststroke Phases", col11s_smooth, "Shoulder Y"
         )
-        wrist_fig = plot_phase(
+        wrist_fig, metrics = plot_phase(
             "Wrist Y - Breaststroke Phases", col17s_smooth, "Wrist Y"
         )
         # 確保在將數據存入 results 之前，先完成所有圖形處理
@@ -242,8 +270,38 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None):
             # *** 儲存圖形對象供 Streamlit 獲取 ***
             "shoulder_fig": shoulder_fig,
             "wrist_fig": wrist_fig,
+            # *** New: Interactive Plot Data for Frontend ***
+            "values": col17s.tolist(), # Use Wrist Y for visualization
+            "values_shoulder": col11s.tolist(),
+            "values_wrist": col17s.tolist(),
+            "frames": frames.tolist(),
+            "segment_metrics": metrics, # Pass calculated metrics
+            "regions": {
+                "Pull regions": propulsion_regions, # Map Propulsion -> Pull (Blue)
+                "Recovery regions": recovery_regions, # Map Recovery -> Recovery (Green)
+                "Glide regions": glide_regions, # Map Glide -> Glide (Grey)
+            }
         }
+    
+    if output_txt:
+        # Prepare data for JSON saving (exclude matplotlib figures)
+        save_data = {}
+        for k, v in results.items():
+            # Create a shallow copy to avoid modifying the return dict which is used by downstream
+            entry = v.copy()
+            # Remove keys that are not serializable or too heavy if needed (figs are definitely not)
+            entries_to_remove = ["shoulder_fig", "wrist_fig"]
+            for fig_key in entries_to_remove:
+                if fig_key in entry:
+                    del entry[fig_key]
+            save_data[k] = entry
+            
+        try:
+            with open(output_txt, "w", encoding="utf-8") as f:
+                json.dump(save_data, f, indent=4, cls=NumpyEncoder)
+            print(f"✅ Phase analysis data saved to {output_txt}")
+        except Exception as e:
+            print(f"❌ Failed to save phase analysis txt: {e}")
+
     return results
 
-
-# 因Streamlit所以有修改

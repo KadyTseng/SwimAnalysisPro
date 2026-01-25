@@ -222,7 +222,12 @@ async function pollProgress(videoId) {
   
   "stroke_plot_figs": {
     "range1": {
-      "plot_path": "path/to/plot.png"
+       "propulsion": [[100, 150], [200, 250]],
+       "recovery": [[150, 160]],
+       "segment_metrics": [
+         {"label": "1.20m", "start_frame": 100, "end_frame": 150, "value": 1.2}
+       ],
+       "values": [120, 125, 130, ...]
     }
   },
   "focus_crop_video_path": "data/processed_videos/focus_abc-123.mp4",
@@ -241,7 +246,7 @@ async function pollProgress(videoId) {
 | `stroke_result` | object | 划手相關分析 |
 | `diving_analysis` | object | 跳水/潛泳/踢腿分析 |
 | `split_timing` | object | 分段時間/速度分析 |
-| `stroke_plot_figs` | object | 相位波形圖 |
+| `stroke_plot_figs` | object | **相位分析數據 (JSON)**，包含推進/恢復/滑行區間、Metrics 與圖表原始數據 |
 | `focus_crop_video_path` | string | focus 裁切影片 |
 | `timestamp` | string | 分析完成時間 (ISO 8601) |
 | `analysis_duration_seconds` | float | 分析耗時 (秒) |
@@ -284,36 +289,46 @@ async function getResults(videoId) {
 ---
 
 ### 5️⃣ **檔案下載** ⬇️
+### 5️⃣ **檔案下載** ⬇️
 **端點**: `GET /analysis/{video_id}/download`
-**用途**: 下載最終後製影片
+**用途**: 下載影片檔案 (後製影片或追焦影片)
+
+#### 參數 (Query Parameters)
+| 參數 | 類型 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `type` | string | 否 | `processed` | 下載檔案類型。可選值: `processed` (後製疊加影片), `focus` (AI追焦影片) |
 
 #### 功能細節
-- 提供最終後製的 MP4 影片供下載
-- 自動設定 HTTP header 和檔案名
-- 串流傳輸 (不會一次載入記憶體)
+- 支援串流傳輸 (Range requests)
+- 自動設定 Content-Type 為 `video/mp4`
 
 #### 回傳
 ```
 Content-Type: video/mp4
-Content-Disposition: attachment; filename="processed_xxx.mp4"
+Content-Disposition: attachment; filename="processed_xxx.mp4" (或 focus_xxx.mp4)
 Body: [二進位影片數據]
 ```
 
-#### 前端使用 (HTML)
+#### 使用範例 (HTML)
 ```html
-<a href="/analysis/abc-123/download" download>下載後製影片</a>
+<!-- 下載後製分析影片 -->
+<a href="/analysis/abc-123/download" download>下載分析影片</a>
+
+<!-- 下載追焦影片 -->
+<a href="/analysis/abc-123/download?type=focus" download>下載追焦影片</a>
 ```
 
 #### 前端使用 (JavaScript)
 ```javascript
-async function downloadVideo(videoId) {
-  const response = await fetch(`/analysis/${videoId}/download`);
+async function downloadVideo(videoId, type = 'processed') {
+  // type = 'processed' or 'focus'
+  const response = await fetch(`/analysis/${videoId}/download?type=${type}`);
   const blob = await response.blob();
   
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `processed_${videoId}.mp4`;
+  a.download = `${type}_${videoId}.mp4`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -323,7 +338,7 @@ async function downloadVideo(videoId) {
 #### 錯誤處理
 | 狀態碼 | 原因 |
 |--------|------|
-| 404 | 找不到影片或後製檔案 |
+| 404 | 找不到指定的影片檔案 |
 | 409 | 影片尚未完成分析 |
 
 ---
