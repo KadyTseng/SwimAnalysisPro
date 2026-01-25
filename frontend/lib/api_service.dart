@@ -4,9 +4,13 @@ import 'models.dart';
 import 'package:file_picker/file_picker.dart';
 
 class ApiService {
+  // [DEPLOYMENT CONFIGURATION]
+  // 1. Local Development (default): 'http://127.0.0.1:9001'
+  // 2. Production Server: Change this to 'http://<YOUR_SERVER_IP>:9001'
+  // 3. Nginx Proxy: If using Nginx to serve both frontend and backend, you can use relative path like '/api' (requires code change to handle relative URLs properly) or just the full domain.
   final String baseUrl;
 
-  ApiService({this.baseUrl = 'http://127.0.0.1:9001'}); // Update with your actual IP if running on device
+  ApiService({this.baseUrl = 'http://127.0.0.1:9001'});
 
   /// Uploads a video file to the backend
   Future<AnalysisUploadResponse> uploadVideo(PlatformFile file) async {
