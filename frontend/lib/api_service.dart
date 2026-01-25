@@ -6,11 +6,13 @@ import 'package:file_picker/file_picker.dart';
 class ApiService {
   final String baseUrl;
 
-  ApiService({this.baseUrl = 'http://127.0.0.1:9000'}); // Update with your actual IP if running on device
+  ApiService({this.baseUrl = 'http://127.0.0.1:9001'}); // Update with your actual IP if running on device
 
   /// Uploads a video file to the backend
   Future<AnalysisUploadResponse> uploadVideo(PlatformFile file) async {
     var uri = Uri.parse('$baseUrl/analysis/upload');
+    print('\n🚀 STARTING UPLOAD to $uri');
+    print('📂 File: ${file.name} (Size: ${file.size} bytes)');
     var request = http.MultipartRequest('POST', uri);
     
     if (file.bytes != null) {
@@ -54,13 +56,18 @@ class ApiService {
     if (response.statusCode == 200) {
       var body = jsonDecode(response.body);
       var currentStep = body['current_step'] ?? '';
-      print("[Frontend API] Status/Progress: ${body['status']} (${body['progress']}%) $currentStep");
       
+      // Enhanced Terminal Output for Visibility
+      print('\n=============================================');
+      print('🏊 ANALYSIS UPDATE: ${body['status'].toString().toUpperCase()}');
+      print('📊 Progress: ${body['progress']}%');
+      if (currentStep.toString().isNotEmpty) print('📍 Step: $currentStep');
       if (body['status'] == 'failed') {
-          // Fix: Backend sends 'error_message', not 'error'
           var errorMsg = body['error_message'] ?? body['error'] ?? 'Unknown Error';
-          print("[Frontend API] ❌ ANALYSIS FAILED: $errorMsg");
+          print('❌ ERROR: $errorMsg');
       }
+      print('=============================================\n');
+      
       return AnalysisStatusResponse.fromJson(body);
     } else {
       print("[Frontend API] Check Status Failed: ${response.body}");
@@ -87,7 +94,10 @@ class ApiService {
   }
 
   /// Helper to get the download URL
-  String getDownloadUrl(String videoId) {
+  String getDownloadUrl(String videoId, {String? type}) {
+    if (type != null) {
+      return '$baseUrl/analysis/$videoId/download?type=$type';
+    }
     return '$baseUrl/analysis/$videoId/download';
   }
 

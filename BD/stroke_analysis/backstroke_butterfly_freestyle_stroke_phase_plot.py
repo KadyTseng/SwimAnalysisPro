@@ -5,7 +5,22 @@ from scipy.ndimage import uniform_filter1d
 import streamlit as st
 
 
-@st.cache_data
+import json
+
+class NumpyEncoder(json.JSONEncoder):
+    """ Special json encoder for numpy types """
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32,
+                              np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+
 def plot_phase_on_col11_col17(
     data_dict, intersection_dict, waterline_y, output_txt=None
 ):
@@ -28,7 +43,7 @@ def plot_phase_on_col11_col17(
         col10s_smooth = uniform_filter1d(col10s, size=10)
         col16s_smooth = uniform_filter1d(col16s, size=10)
 
-        direction = "forward" if "range1" in key else "backward"
+        direction = "forward" if ("decreasing" in key or "range1" in key) else "backward"
         intersection_frames = np.array(intersection_dict.get(key, []))
 
         # Recovery 區間
@@ -162,9 +177,7 @@ def plot_phase_on_col11_col17(
 
         print(output_text)
 
-        if output_txt is not None:
-            with open(output_txt, "a", encoding="utf-8") as f:
-                f.write(output_text)
+        # Removed inline text writing to support unified JSON output at the end
 
         def plot_phase(fig_title, y_values, y_label):
             fig, ax1 = plt.subplots(figsize=(15, 3))
@@ -218,6 +231,7 @@ def plot_phase_on_col11_col17(
             ax2.set_xlim(ax1.get_xlim())
             tick_positions = []
             tick_labels = []
+            segment_metrics = []
 
             for i in range(1, len(stage_starts)):
                 start_f = stage_starts[i - 1]
@@ -226,9 +240,17 @@ def plot_phase_on_col11_col17(
                     delta_x = frame_to_hip_x[end_f] - frame_to_hip_x[start_f]
                     segment_disp = abs(delta_x * (25 / 3840))
                     label = f"{segment_disp:.2f}m"
-                    center_f = (start_f + end_f) // 2
-                    tick_positions.append(center_f)
+                    center_f = (start_f + end_f) / 2 # Float for precision
+                    tick_positions.append((start_f + end_f) // 2)
                     tick_labels.append(label)
+                    
+                    segment_metrics.append({
+                        "label": label,
+                        "start_frame": int(start_f),
+                        "end_frame": int(end_f),
+                        "center_frame": center_f,
+                        "value": float(segment_disp)
+                    })
 
             # 不要用 ax2.set_xticklabels 顯示，先清空
             ax2.set_xticks(tick_positions)
@@ -244,8 +266,10 @@ def plot_phase_on_col11_col17(
                     if ps <= center_f <= pe:
                         is_push = True
                         break
-
-                y_text = 1.05 if is_push else 1.01  # Pull 比其他的高
+                
+                # For consistency with Breaststroke: Push -> Top, Pull -> Top?
+                # Original logic: Push (orange) -> 1.05.
+                y_text = 1.05 if is_push else 1.01
                 ax2.text(
                     center_f,
                     y_text,
@@ -263,9 +287,6 @@ def plot_phase_on_col11_col17(
 
             # Restrict X-axis to active swimming phases only
             if stage_starts:
-                 # Filter out the fallback 'frames[-1]' if it's just padding
-                 # Actually, keeping it is fine, but we want to ensure we start at the first PHASE.
-                 # stage_starts contains starts of phases.
                  plot_min = min(stage_starts)
                  plot_max = max(stage_starts)
                  
@@ -284,21 +305,51 @@ def plot_phase_on_col11_col17(
             ax1.legend(by_label.values(), by_label.keys(), fontsize=6)
 
             # plt.show()
-            return fig  # <--- 返回 Matplotlib Figure 對象
+            return fig, segment_metrics  # <--- Return metrics as well
 
         # plot_phase("Shoulder Y (col11)", col11s, "Shoulder Y")
         # plot_phase("Wrist Y (col17)", col17s, "Wrist Y")
-        shoulder_fig = plot_phase("Shoulder Y (col11) - Phases", col11s, "Shoulder Y")
-        wrist_fig = plot_phase("Wrist Y (col17) - Phases", col17s, "Wrist Y")
+        shoulder_fig, _ = plot_phase("Shoulder Y (col11) - Phases", col11s, "Shoulder Y")
+        wrist_fig, wrist_metrics = plot_phase("Wrist Y (col17) - Phases", col17s, "Wrist Y")
 
+        # Map 'Glide/Unknown' gaps? 
+        # The script calculates regions: Pull, Push, Recovery.
+        # Any gap is implicitly Glide? Or just not labeled. 
+        # Frontend ChartWidget defaults to 'Glide'.
+        
         phase_data_for_return = {
             "Pull regions": pull_regions,
             "Recovery regions": recovery_regions,
             "Push regions": push_regions,
-            "shoulder_fig": shoulder_fig,  # <--- 儲存 Shoulder 圖
-            "wrist_fig": wrist_fig,  # <--- 儲存 Wrist 圖
+            "shoulder_fig": shoulder_fig,
+            "wrist_fig": wrist_fig,
+            # *** New: Interactive Plot Data for Frontend ***
+            "values": col17s.tolist(), # Use Wrist Y
+            "frames": frames.tolist(),
+            "segment_metrics": wrist_metrics, # Pass calculated metrics from wrist plot
+            "regions": {
+                "Pull regions": pull_regions,
+                "Push regions": push_regions,
+                "Recovery regions": recovery_regions
+            }
         }
         full_results[key] = phase_data_for_return
+    
+    if output_txt:
+        # Save Full Results appropriately to JSON
+        save_data = {}
+        for k, v in full_results.items():
+             entry = v.copy()
+             if "shoulder_fig" in entry: del entry["shoulder_fig"]
+             if "wrist_fig" in entry: del entry["wrist_fig"]
+             save_data[k] = entry
+        
+        try:
+             with open(output_txt, "w", encoding="utf-8") as f:
+                 json.dump(save_data, f, indent=4, cls=NumpyEncoder)
+             print(f"✅ Phase analysis JSON saved to {output_txt}")
+        except Exception as e:
+             print(f"❌ Failed to save phase JSON: {e}")
 
     return full_results
 

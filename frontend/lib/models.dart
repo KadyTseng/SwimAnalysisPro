@@ -28,6 +28,7 @@ class AnalysisStatusResponse {
   final String status;
   final int? progress;
   final String? errorMessage;
+  final String? currentStep;
 
   AnalysisStatusResponse({
     required this.videoId,
@@ -35,6 +36,7 @@ class AnalysisStatusResponse {
     required this.status,
     this.progress,
     this.errorMessage,
+    this.currentStep,
   });
 
   factory AnalysisStatusResponse.fromJson(Map<String, dynamic> json) {
@@ -44,6 +46,7 @@ class AnalysisStatusResponse {
       status: json['status'],
       progress: json['progress'],
       errorMessage: json['error_message'],
+      currentStep: json['current_step'],
     );
   }
 }
@@ -143,6 +146,7 @@ class StrokeAnalysisResult {
   final double? strokesPerMinute;
   final double? averageStrokeDurationMs;
   final Map<String, List<StrokePhaseInfo>>? phases;
+  final Map<String, dynamic>? metadata;
 
   StrokeAnalysisResult({
     required this.totalCount,
@@ -152,6 +156,7 @@ class StrokeAnalysisResult {
     this.strokesPerMinute,
     this.averageStrokeDurationMs,
     this.phases,
+    this.metadata,
   });
 
   factory StrokeAnalysisResult.fromJson(Map<String, dynamic> json) {
@@ -171,6 +176,7 @@ class StrokeAnalysisResult {
       strokesPerMinute: json['strokes_per_minute']?.toDouble(),
       averageStrokeDurationMs: json['average_stroke_duration_ms']?.toDouble(),
       phases: parsedPhases,
+      metadata: json['metadata'],
     );
   }
 }
@@ -178,16 +184,19 @@ class StrokeAnalysisResult {
 class SplitTimingResult {
   final List<double> splits;
   final double? averageSpeed;
+  final Map<String, dynamic>? metadata;
   
   SplitTimingResult({
     required this.splits,
     this.averageSpeed,
+    this.metadata,
   });
 
   factory SplitTimingResult.fromJson(Map<String, dynamic> json) {
     return SplitTimingResult(
       splits: List<double>.from(json['splits'].map((x) => x.toDouble())),
       averageSpeed: json['average_speed']?.toDouble(),
+      metadata: json['metadata'],
     );
   }
 }

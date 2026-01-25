@@ -139,107 +139,108 @@ def overlay_results_on_video(
         # 2. 畫虛線、時間文字、Stroke! 標記 (原有的疊加邏輯)
 
         if split_times:
+            pass
             # 1. 計算限制的 Y 座標範圍
-            height = frame.shape[0]  # 取得影片幀的實際高度 (例如 1080)
+            # height = frame.shape[0]  # 取得影片幀的實際高度 (例如 1080)
 
-            # 25% 的高度 (起始點)
-            start_y = int(height * 0.25)
+            # # 25% 的高度 (起始點)
+            # start_y = int(height * 0.25)
 
-            # 75% 的高度 (結束點)
-            end_y = int(height * 0.80)
+            # # 75% 的高度 (結束點)
+            # end_y = int(height * 0.80)
 
-            # 虛線的間隔設定
-            line_segment_length = 10  # 虛線段長度
-            line_gap = 10  # 虛線間隔長度 (總步長 20)
-            line_step = line_segment_length + line_gap  # 總步長 (20)
+            # # 虛線的間隔設定
+            # line_segment_length = 10  # 虛線段長度
+            # line_gap = 10  # 虛線間隔長度 (總步長 20)
+            # line_step = line_segment_length + line_gap  # 總步長 (20)
 
-            for label_key, color in zip(["15m", "25m", "50m"], [(0, 255, 0)] * 3):
+            # for label_key, color in zip(["15m", "25m", "50m"], [(0, 255, 0)] * 3):
 
-                # 尋找已在 time_labels_all 中調整過的 X 座標
-                current_label = next(
-                    (l for l in time_labels_all if l["label"].startswith(label_key)),
-                    None,
-                )
-                if current_label is None:
-                    continue
+            #     # 尋找已在 time_labels_all 中調整過的 X 座標
+            #     current_label = next(
+            #         (l for l in time_labels_all if l["label"].startswith(label_key)),
+            #         None,
+            #     )
+            #     if current_label is None:
+            #         continue
 
-                x_pos = current_label["x"]  # 使用已經調整好的 X 座標 (25m 有額外偏移)
+            #     x_pos = current_label["x"]  # 使用已經調整好的 X 座標 (25m 有額外偏移)
 
-                # 3. 調整 range 函式，讓它從 start_y 開始，到 end_y 結束，步長為 line_step
-                for y_line in range(start_y, end_y, line_step):
+            #     # 3. 調整 range 函式，讓它從 start_y 開始，到 end_y 結束，步長為 line_step
+            #     for y_line in range(start_y, end_y, line_step):
 
-                    # 計算線段的終點
-                    y_end = y_line + line_segment_length
+            #         # 計算線段的終點
+            #         y_end = y_line + line_segment_length
 
-                    # 確保線段不會畫超出 end_y 範圍
-                    if y_end > end_y:
-                        y_end = end_y
+            #         # 確保線段不會畫超出 end_y 範圍
+            #         if y_end > end_y:
+            #             y_end = end_y
 
-                    # 4. 繪製虛線段
-                    cv2.line(
-                        frame,
-                        (int(x_pos), y_line),  # 起點 (x_pos, y_line)
-                        (int(x_pos), y_end),  # 終點 (x_pos, y_end)
-                        color,
-                        2,
-                    )
+            #         # 4. 繪製虛線段
+            #         cv2.line(
+            #             frame,
+            #             (int(x_pos), y_line),  # 起點 (x_pos, y_line)
+            #             (int(x_pos), y_end),  # 終點 (x_pos, y_end)
+            #             color,
+            #             2,
+            #         )
 
-        # 更新標籤顯示
-        for label in time_labels_all:
-            if label not in active_labels and frame_id >= label["frame"]:
-                active_labels.append(label)
+        # 更新標籤顯示 (暫時取消文字顯示)
+        # for label in time_labels_all:
+        #     if label not in active_labels and frame_id >= label["frame"]:
+        #         active_labels.append(label)
 
-        # 畫時間文字
-        for label in active_labels:
-            # 🎯 關鍵修正 2：根據 direction 判斷文字位置
-            # text_x = label["x"] - TEXT_OFFSET_LEFT if label["direction"] == "left" else label["x"] + TEXT_OFFSET_RIGHT
-
-            if label["direction"] == "left":
-                # 50m (在右側，文字向左偏移)
-                text_x = label["x"] - TEXT_OFFSET_LEFT
-            else:
-                # 15m 和 25m (在左側或中間，文字向左偏移)
-                # 這裡使用負偏移量確保文字在虛線左側
-                text_x = label["x"] - TEXT_OFFSET_LEFT
-
-            # 確保文字不會超出畫面左邊
-            text_x = max(20, text_x)
-
-            cv2.putText(
-                frame,
-                label["label"],
-                (text_x, label["y"]),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.5,
-                (0, 255, 0),
-                2,
-            )
+        # 畫時間文字 (暫時取消文字顯示)
+        # for label in active_labels:
+        #     # 🎯 關鍵修正 2：根據 direction 判斷文字位置
+        #     # text_x = label["x"] - TEXT_OFFSET_LEFT if label["direction"] == "left" else label["x"] + TEXT_OFFSET_RIGHT
+        #
+        #     if label["direction"] == "left":
+        #         # 50m (在右側，文字向左偏移)
+        #         text_x = label["x"] - TEXT_OFFSET_LEFT
+        #     else:
+        #         # 15m 和 25m (在左側或中間，文字向左偏移)
+        #         # 這裡使用負偏移量確保文字在虛線左側
+        #         text_x = label["x"] - TEXT_OFFSET_LEFT
+        #
+        #     # 確保文字不會超出畫面左邊
+        #     text_x = max(20, text_x)
+        #
+        #     cv2.putText(
+        #         frame,
+        #         label["label"],
+        #         (text_x, label["y"]),
+        #         cv2.FONT_HERSHEY_SIMPLEX,
+        #         1.5,
+        #         (0, 255, 0),
+        #         2,
+        #     )
 
         # 3. 疊加追焦小影片 (自動適應尺寸並置於右上角)
-        if focus_cap is not None:
-            ret_f, focus_frame = focus_cap.read()
-            if ret_f:
-                # 🎯 自動讀取追焦畫面的高度與寬度
-                # (這會是你設定的 height * 0.25 與 height * 0.5)
-                fh, fw, _ = focus_frame.shape
+        # if focus_cap is not None:
+        #     ret_f, focus_frame = focus_cap.read()
+        #     if ret_f:
+        #         # 🎯 自動讀取追焦畫面的高度與寬度
+        #         # (這會是你設定的 height * 0.25 與 height * 0.5)
+        #         fh, fw, _ = focus_frame.shape
 
-                # 🎯 計算右上角位置
-                # x_offset: 總寬度 - 追焦寬度 - 邊距
-                # y_offset: 邊距
-                margin = 20
-                x_offset = width - fw - margin
-                y_offset = margin
+        #         # 🎯 計算右上角位置
+        #         # x_offset: 總寬度 - 追焦寬度 - 邊距
+        #         # y_offset: 邊距
+        #         margin = 20
+        #         x_offset = width - fw - margin
+        #         y_offset = margin
 
-                # 💡 安全檢查：確保疊加區域不會超出主畫面邊界
-                if x_offset >= 0 and y_offset + fh <= height:
-                    frame[y_offset : y_offset + fh, x_offset : x_offset + fw] = (
-                        focus_frame
-                    )
-                else:
-                    # 如果追焦畫面太大(這在 0.25 比例下通常不會發生)，可以縮小它
-                    logging.warning(
-                        "Focus frame exceeds main video boundaries. Check scale."
-                    )
+        #         # 💡 安全檢查：確保疊加區域不會超出主畫面邊界
+        #         if x_offset >= 0 and y_offset + fh <= height:
+        #             frame[y_offset : y_offset + fh, x_offset : x_offset + fw] = (
+        #                 focus_frame
+        #             )
+        #         else:
+        #             # 如果追焦畫面太大(這在 0.25 比例下通常不會發生)，可以縮小它
+        #             logging.warning(
+        #                 "Focus frame exceeds main video boundaries. Check scale."
+        #             )
 
         out.write(frame)
         frame_id += 1

@@ -186,47 +186,100 @@ from .backstroke_butterfly_freestyle_stroke_phase_plot import (
 )  # 分開管理 plot 實作
 
 
+def extract_columns_for_segment(txt_path, start, end):
+    """
+    擷取指定區間 [start, end] 內的數據
+    """
+    def parse_line(line):
+        parts = line.strip().split()
+        if len(parts) > 17:
+            frame_id = int(parts[0])
+            col10 = float(parts[10])
+            col11 = float(parts[11])
+            col16 = float(parts[16])
+            col17 = float(parts[17])
+            col19 = float(parts[19])
+            return frame_id, col10, col11, col16, col17, col19
+        return None
+
+    segment_data = []
+    with open(txt_path, "r") as f:
+        for line in f:
+            parsed = parse_line(line)
+            if parsed:
+                frame_id = parsed[0]
+                if start <= frame_id <= end:
+                    segment_data.append(parsed)
+    return segment_data
+
 def run_backstroke_butterfly_analysis(
-    txt_path: str, video_path: str, waterline_y: float
+    txt_path: str, video_path: str, waterline_y: float, laps_data: list = None, output_txt_path: str = None
 ):
     """
     執行仰式/蝶式的分析流程：
-    1. 找出有效分析區間 (e1, s2, e2, touch_frame)。
-    2. 計算肩關節與手腕的交會點 (作為劃分階段的依據)。
-    3. 呼叫繪圖函數輸出波形圖和結果 TXT。
+    支援新的 laps_data (彈性分趟) 或舊的自動偵測 (extract_stroke_segments)。
+    output_txt_path: 指定輸出相位資訊的 TXT 檔案路徑。
     """
-    # 確保 extract_stroke_segments 已經被定義在上面或導入
-    # 假設 extract_stroke_segments 返回 5 個值
-    e1, s2, e2, touch_frame, waterline_y = extract_stroke_segments(
-        txt_path, video_path, waterline_y
-    )
+    data = {}
+    analysis_end_frame = 0
 
-    if None in (e1, s2, e2):  # 這裡我們只需要檢查 e1, s2, e2 是否有效
-        print(f"⚠️ 區間資訊缺失，跳過影片: {video_path} (核心分段不足)")
-        return {"status": "skipped", "reason": "core segments missing"}
+    if laps_data:
+        # 使用傳入的分趟資訊
+        for lap in laps_data:
+            trend = lap.get('trend', 'unknown')
+            idx = lap.get('lap_index', 0)
+            swim_seg = lap.get('swimming_segment')
+            
+            if swim_seg and swim_seg[0] is not None: # 確保有游泳段
+                s, e = swim_seg
+                key = f"lap{idx}_{trend}"
+                # 擷取該段落的數據
+                seg_data = extract_columns_for_segment(txt_path, s, e)
+                if seg_data:
+                    data[key] = seg_data
+                    analysis_end_frame = max(analysis_end_frame, e)
+        
+        if not data:
+             print(f"⚠️ 傳入 laps_data 但無有效的游泳段數據，跳過影片: {video_path}")
+             return {"status": "skipped", "reason": "no valid swimming segments in laps_data"}
 
-        # --- 修正點：定義分析終點 ---
-    if touch_frame is None:
-        # 如果沒有偵測到觸牆，獲取影片的總幀數作為分析終點
-        cap = cv2.VideoCapture(video_path)
-        last_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        analysis_end_frame = last_frame - 5  # 使用影片最後5幀
-        print("偵測不到觸牆幀，使用影片最後一幀作為分析終點。")
     else:
-        analysis_end_frame = touch_frame
-
-    range1 = (e1, s2)
-    range2 = (e2, analysis_end_frame)
-
-    # 擷取所需欄位數據
-    data = extract_columns_in_range(txt_path, range1, range2)
+        # 舊邏輯：自動偵測 2 段
+        # 確保 extract_stroke_segments 已經被定義在上面或導入
+        e1, s2, e2, touch_frame, waterline_y = extract_stroke_segments(
+            txt_path, video_path, waterline_y
+        )
+    
+        if None in (e1, s2, e2):  # 這裡我們只需要檢查 e1, s2, e2 是否有效
+            print(f"⚠️ 區間資訊缺失，跳過影片: {video_path} (核心分段不足)")
+            return {"status": "skipped", "reason": "core segments missing"}
+    
+            # --- 修正點：定義分析終點 ---
+        if touch_frame is None:
+            # 如果沒有偵測到觸牆，獲取影片的總幀數作為分析終點
+            cap = cv2.VideoCapture(video_path)
+            last_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+            analysis_end_frame = last_frame - 5  # 使用影片最後5幀
+            print("偵測不到觸牆幀，使用影片最後一幀作為分析終點。")
+        else:
+            analysis_end_frame = touch_frame
+    
+        range1 = (e1, s2)
+        range2 = (e2, analysis_end_frame)
+    
+        # 擷取所需欄位數據
+        # 舊 extract_columns_in_range 返回 {"range1": ..., "range2": ...}
+        data = extract_columns_in_range(txt_path, range1, range2)
 
     # 找出划手階段交會點
     intersection_dict = plot_intersection_from_smoothed(data)
 
-    base, _ = os.path.splitext(video_path)
-    output_txt = base + ".a.txt"
+    if output_txt_path:
+        output_txt = output_txt_path
+    else:
+        base, _ = os.path.splitext(video_path)
+        output_txt = base + ".a.txt"
 
     # 執行繪圖和結果輸出
     full_phase_regions = plot_phase_on_col11_col17(

@@ -1,41 +1,90 @@
 SwimAnalysisPro/
-├── main.py                     # 應用程式主入口：啟動 UI，整合前後端。
+├── main.py                          # [Backend] 應用程式主入口 (FastAPI)：啟動 API Server，整合前後端。
+├── Project_arc.txt                  # 專案架構說明檔 (本檔案)。
+├── requirements.txt                 # Python 依賴套件列表。
+├── .gitignore                       # Git 忽略設定。
 │
-├── BD/                    # 後端分析與處理層：核心分析與數據處理邏輯
-│   ├── __init__.py             # Backend 模組初始化
-│   ├── orchestrator.py         # 後端協調器 / 主控邏輯：管理分析流程，調度各模組(要把各功能寫成可調用的module)。
-│   ├── data_manager.py         # 狀態與進度管理：負責追蹤每個背景分析任務的進度、狀態、錯誤訊息及最終路徑，供前端輪詢查詢。
-│   ├── pose_estimator.py       # 骨架模型(models)：負責影片轉關節點 TXT。
-│   ├── txt_base.py             # 關節點TXT基本處理(keypoints)：負責把關節點 TXT做內插平滑。
-│   ├── diving_analyzer_track_angles.py  # 潛泳軌跡與踢腿角度計算：處理潛泳數據。
-│   ├── stroke_style_recognizer.py # 泳姿辨識：判斷泳姿類型。
-│   │ 
-│   ├── freestyle_pose_estimator/     # 自由式辨識：自由式獨立的骨架。
-│   │   ├── freestyle_pose_estimator.py   # 自由式骨架模型(models)：負責影片轉關節點 TXT。
-│   │   └── txt_base.py                   # 關節點TXT基本處理(keypoints)：負責把關節點 TXT做內插平滑。   
-│   │   
-│   ├── stroke_analysis/         # 划手階段演算法庫：根據泳姿選擇不同演算法。
-│   │   ├── __init__.py
-│   │   ├── backstroke_butterfly_freestyle_stroke_stage.py # 仰式、蝶式、自由式划手分析階段
-│   │   ├── backstroke_butterfly_freestyle_stroke_phase_plot.py # 仰式、蝶式、自由式划手畫圖
-│   │   ├── breaststroke_stroke_stage.py # 蛙式划手分析階段
-│   │   └── breaststroke_stroke_phase_plot.py # 蛙式划手畫圖
-│   │   
-│   ├── stroke_counter/         # 划手次數演算法庫：根據泳姿選擇不同演算法。
-│   │   ├── __init__.py
-│   │   ├── backstroke_butterfly_freestyle_stroke_counter.py # 仰式、自由式、蝶式划手次數
-│   │   └── breaststroke_counter.py # 蛙式划手次數
-│   │   
-│   ├── split_speed_analyzer.py # 分段計時與速度計算：計時。
-│   ├── focus_tracking_view.py # 追焦框：追焦畫面剪裁。
-│   └──video_postprocessor.py  # 後製影片生成：將所有分析數據疊加到影片。
+├── BD/                              # [Backend] 後端核心分析模組
+│   ├── __init__.py
+│   ├── orchestrator.py              # [核心] 分析協調器：管理從骨架提取到影片生成的完整流程。
+│   ├── data_manager.py              # [狀態] 進度管理：追蹤 video_id 的分析進度與結果。
+│   ├── pose_estimator.py            # [AI] 骨架提取：呼叫 YOLOv11 模型產出 Keypoints TXT。
+│   ├── txt_base.py                  # [處理] 數據前處理：Keypoints 插值與平滑化。
+│   ├── diving_analyzer_track_angles.py      # [分析] 潛泳分析：計算踢腿角度、入水/轉身軌跡。
+│   ├── diving_analyzer_track_angles_test.py # [測試] 潛泳分析模組測試。
+│   ├── stroke_style_recognizer.py   # [AI] 泳姿辨識：使用 SVM 分類器判斷泳姿。
+│   ├── split_speed_analyzer.py      # [分析] 速度分析：計算分段時間 (Split Times) 與平均速度。
+│   ├── focus_tracking_view.py       # [視覺化] 追焦影片：生成單獨的選手追蹤影片 (Focus Video)。
+│   ├── video_postprocessor.py       # [視覺化] 後製疊加：將分析數據(骨架、儀表板)疊加回原始影片。
+│   │
+│   ├── freestyle_pose_estimator/    # [Legacy] 自由式專用模組目錄
+│   │   ├── freestyle_pose_estimator.py   # 舊版自由式骨架提取。
+│   │   └── txt_base.py                   # 舊版數據處理。
+│   │
+│   └── stroke_analysis/             # [分析] 划手階段分析演算法庫
+│       ├── __init__.py
+│       ├── backstroke_butterfly_freestyle_stroke_stage.py      # 仰/蝶/自：划手週期判定。
+│       ├── backstroke_butterfly_freestyle_stroke_phase_plot.py # 仰/蝶/自：相位圖繪製數據生成。
+│       ├── breaststroke_stroke_stage.py                        # 蛙式：划手週期判定。
+│       └── breaststroke_stroke_phase_plot.py                   # 蛙式：相位圖繪製數據生成。
+│   
 │
-├── data/                       # 數據儲存層：專案運行時生成的數據
-│   ├── videos/                 # 可選：存放原始影片的副本（如果需要）。
-│   ├── keypoints/              # 存放骨架模型生成的關節點 TXT 檔案。
-│   ├── models/                 # 存放模型(全泳姿、單獨自由式、SVM)。
-│   └── processed_videos/       # 存放最終生成的後製影片。
-│ 
-├── .gitignore                  # Git 版本控制忽略文件。
-├── requirements.txt          # 專案所需的 Python 函式庫列表。
-└── Project_arc.txt             # 專案架構。
+├── uploaded_videos/                 # [Input] 使用者透過 API 上傳的原始影片存放區。
+├── data/                            # [Data] 數據儲存層
+│   ├── keypoints/                   # [Intermediate] 骨架節點數據 
+│   ├── Stroke_Phase_Frames/          # [Output] 划手階段數據 (.txt)。
+│   ├── models/                      # [Model] AI 模型檔案 (例如: best_1.pt, svm_model.pkl)。
+│   └── processed_videos/            # [Output] 產出的最終分析影片 (.mp4/avi) 與 Focus 影片。
+│
+└── frontend/                        # [Frontend] 前端 Flutter 應用程式
+    ├── pubspec.yaml                 # Flutter 專案依賴與設定檔。
+    ├── pubspec.lock                 # 依賴版本鎖定檔。
+    ├── analysis_options.yaml        # Dart 程式碼分析與 Linter 設定。
+    ├── .gitignore                   # Flutter 專案 Git 忽略設定。
+    ├── README.md                    # 前端專案說明。
+    ├── frontend.iml                 # IDE 專案檔 (IntelliJ/Android Studio)。
+    │
+    ├── lib/                         # [Code] 前端原始碼核心目錄
+    │   ├── main.dart                # [Entry] App 入口：設定路由、主題 Theme、主畫面。
+    │   ├── api_service.dart         # [Service] API 服務層：封裝與 Python 後端的 HTTP 通訊。
+    │   ├── models.dart              # [Model] 數據模型層：定義 JSON 解析結構 (AnalysisResult)。
+    │   └── screens/                 # [View] UI 頁面目錄
+    │       ├── record_screen.dart           # 即時錄影/監控畫面 (Live Monitor，串接 OBS/Camera)。
+    │       ├── upload_screen.dart           # 影片上傳與選取頁面 (含歷史紀錄列表)。
+    │       ├── analysis_progress_screen.dart # 分析進度條顯示與輪詢頁面。
+    │       ├── result_screen.dart           # 結果儀表板：整合影片播放器與數據展示。
+    │       └── chart_widget.dart            # 圖表組件：繪製互動式相位圖與角度圖 (Canvas/CustomPaint)。
+    │
+    ├── android/                     # [Platform] Android 原生工程目錄
+    │   ├── app/                         # Android App 模組源碼 (Manifest, Java/Kotlin)。
+    │   ├── gradle/                      # Gradle Wrapper 檔案。
+    │   ├── build.gradle.kts             # 專案級 Gradle 建置設定。
+    │   ├── settings.gradle.kts          # Gradle 專案設定。
+    │   └── local.properties             # SDK 路徑設定 (不版控)。
+    │
+    ├── ios/                         # [Platform] iOS 原生工程目錄
+    │   ├── Runner/                      # iOS App 源碼 (AppDelegate, Info.plist)。
+    │   ├── Runner.xcodeproj/            # Xcode 專案檔。
+    │   ├── Runner.xcworkspace/          # Xcode 工作區檔。
+    │   └── Flutter/                     # Flutter 嵌入設定 (Generated.xcconfig)。
+    │
+    ├── web/                         # [Platform] Web 專案目錄
+    │   ├── index.html                   # Web 入口 HTML。
+    │   ├── manifest.json                # PWA 設定檔。
+    │   └── icons/                       # Web 圖示資源。
+    │
+    ├── windows/                     # [Platform] Windows 桌面應用目錄
+    │   ├── runner/                      # Windows App 源碼 (main.cpp, utils)。
+    │   ├── flutter/                     # Flutter 嵌入設定 (generated_plugin_registrant)。
+    │   └── CMakeLists.txt               # CMake 建置設定。
+    │
+    ├── macos/                       # [Platform] macOS 桌面應用目錄
+    │   └── Runner/                      # macOS App 源碼。
+    │
+    ├── linux/                       # [Platform] Linux 桌面應用目錄
+    │   └── my_application.cc            # Linux App 源碼。
+    │
+    ├── test/                        # [Test] 測試代碼目錄
+    │   └── widget_test.dart             # Flutter Widget 基本測試範例。
+    │
+    └── build/                       # [Build] 編譯輸出目錄 (自動生成，包含 apk, ipa, web, windows 等產物)。
