@@ -31,9 +31,9 @@ from BD.focus_tracking_view import export_focus_only_video
 import subprocess
 import logging
 
-# --- 🎯 FFMPEG 執行檔的精確路徑 ---
-# 使用 r"" 來處理反斜線，確保路徑正確
-FFMPEG_EXECUTABLE_PATH = r"C:\ffmpeg-8.0-essentials_build\bin\ffmpeg.exe"
+# --- 🎯 FFMPEG 執行檔的精確路徑 (Linux 使用 "ffmpeg" 或 "/usr/bin/ffmpeg") ---
+# 使用系統安裝的 ffmpeg 以避免 conda 版本衝突
+FFMPEG_EXECUTABLE_PATH = "/usr/bin/ffmpeg"
 # ------------------------------------
 
 

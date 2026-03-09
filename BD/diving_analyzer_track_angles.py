@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import cv2
 import matplotlib.pyplot as plt
+import math
 from scipy.signal import argrelextrema
 import streamlit as st
 
@@ -24,17 +25,23 @@ def read_and_clean_txt(path, expected_cols=4):
                     bbox_y = float(parts[3])
                     bbox_width = float(parts[4])
                     bbox_height = float(parts[5]) # 讀取 height
+                    col7 = float(parts[7])   # 頭x
                     col8 = float(parts[8])   # 頭y
+                    shoulder_x = float(parts[10]) # 肩膀x
                     col11 = float(parts[11]) # 肩膀y
+                    elbow_x = float(parts[13]) # 手肘x
                     col14 = float(parts[14]) # 手肘y
+                    wrist_x = float(parts[16]) # 手腕x
                     col17 = float(parts[17]) # 手腕y
                     hip_x = float(parts[19]) # 髖關節 x
                     hip_y = float(parts[20]) # 髖關節 y
+                    knee_x = float(parts[22]) # 膝蓋x
                     col23 = float(parts[23]) # 膝蓋y
+                    ankle_x = float(parts[25]) # 腳踝x
                     col26 = float(parts[26]) # 腳踝y
                     
                     data.append(
-                        (frame_id, bbox_x, bbox_y, bbox_width, bbox_height, col8, col11, col14, col17, hip_x, hip_y, col23, col26)
+                        (frame_id, bbox_x, bbox_y, bbox_width, bbox_height, col7, col8, shoulder_x, col11, elbow_x, col14, wrist_x, col17, hip_x, hip_y, knee_x, col23, ankle_x, col26)
                     )
                 except:
                     continue
@@ -46,13 +53,19 @@ def read_and_clean_txt(path, expected_cols=4):
             "bbox_y",
             "width",
             "height", # 新增 height column
+            "head_x",
             "col8",
+            "shoulder_x",
             "shoulder_y",
+            "elbow_x",
             "elbow_y",
+            "wrist_x",
             "wrist_y",
             "hip_x",
             "hip_y",
+            "knee_x",
             "knee_y",
+            "ankle_x",
             "ankle_y"
         ],
     )
@@ -90,9 +103,10 @@ def detect_waterline_y(
     if contours:
         largest_contour = max(contours, key=cv2.contourArea)
         waterline_y = np.min(largest_contour[:, :, 1])
-        return waterline_y
+        pool_bottom_y = np.max(largest_contour[:, :, 1])
+        return waterline_y, pool_bottom_y
     else:
-        return None
+        return None, None
 
 
 def calculate_kick_segment_metrics(frames, hip_xs, min_frames, video_width=3840):
@@ -297,7 +311,7 @@ def get_diving_swimming_segments(video_path, df, top_n=None): # top_n is depreca
     if not ret:
         raise RuntimeError("影片無法讀取")
 
-    waterline_y = detect_waterline_y(frame)
+    waterline_y, _ = detect_waterline_y(frame)
     if waterline_y is None:
         raise RuntimeError("水面偵測失敗")
 
@@ -347,7 +361,7 @@ def calculate_kick_angles_from_txt(file_path):
 
         if "no" in values or len(values) < 21:
             angles_data.append(
-                (frame_id, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
+                (frame_id, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
             )
             continue
 
@@ -361,11 +375,30 @@ def calculate_kick_angles_from_txt(file_path):
         angle_2 = calculate_angle(C, B, A)
         min_angle = min(angle_1, angle_2)
 
-        angles_data.append((frame_id, min_angle, A[0], A[1], B[0], B[1], C[0], C[1]))
+        # Upper body angle calculation
+        # Wrist = (16, 17), Shoulder = (10, 11), Hip = (19, 20)
+        try:
+            wrist = (values[16], values[17])
+            shoulder = (values[10], values[11])
+            hip = (values[19], values[20])
+            
+            angle_wrist = math.atan2(wrist[1] - shoulder[1], wrist[0] - shoulder[0])
+            angle_hip = math.atan2(hip[1] - shoulder[1], hip[0] - shoulder[0])
+            
+            # Trend decreasing (Right to Left): Clockwise from Wrist to Hip
+            upper_angle_dec = math.degrees(angle_hip - angle_wrist) % 360
+            
+            # Trend increasing (Left to Right): Counter-Clockwise from Wrist to Hip
+            upper_angle_inc = math.degrees(angle_wrist - angle_hip) % 360
+        except IndexError:
+            upper_angle_dec = np.nan
+            upper_angle_inc = np.nan
+
+        angles_data.append((frame_id, min_angle, upper_angle_dec, upper_angle_inc, A[0], A[1], B[0], B[1], C[0], C[1]))
 
     df_angles = pd.DataFrame(
         angles_data,
-        columns=["frame_id", "angle", "A_x", "A_y", "B_x", "B_y", "C_x", "C_y"],
+        columns=["frame_id", "angle", "upper_angle_dec", "upper_angle_inc", "A_x", "A_y", "B_x", "B_y", "C_x", "C_y"],
     )
     return df_angles
 
@@ -400,6 +433,7 @@ def draw_trajectory_on_video(
     segment_start,
     segment_end,
     line_color=(0, 0, 255),
+    head_color=(0, 255, 255),
     line_thickness=3,
 ):
     cap = cv2.VideoCapture(video_path)
@@ -410,6 +444,7 @@ def draw_trajectory_on_video(
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
     track_points = []
+    head_points = []
     frame_id = 0
 
     while True:
@@ -422,13 +457,20 @@ def draw_trajectory_on_video(
         if not row.empty:
             x = int(row["hip_x"].values[0])
             y = int(row["hip_y"].values[0])
+            head_x = int(row["head_x"].values[0])
+            head_y = int(row["col8"].values[0])
 
             if segment_start <= frame_id <= segment_end:
                 track_points.append((x, y))
+                head_points.append((head_x, head_y))
 
         for i in range(len(track_points) - 1):
             cv2.line(
                 frame, track_points[i], track_points[i + 1], line_color, line_thickness
+            )
+        for i in range(len(head_points) - 1):
+            cv2.line(
+                frame, head_points[i], head_points[i + 1], head_color, line_thickness
             )
 
         out.write(frame)
@@ -447,6 +489,7 @@ def plot_kick_angle_waveform_with_lines_df(
     draw_aux_lines=True,
     crop_from_ankle_min=False,
     total_distance=25.0,
+    trend="decreasing"
 ):
     # ===== 取指定區段 =====
     sub_df = df_angles[
@@ -455,6 +498,10 @@ def plot_kick_angle_waveform_with_lines_df(
     ]
     frames = sub_df["frame_id"].values
     angles = sub_df["angle"].values
+    if trend == "decreasing":
+        upper_angles = sub_df["upper_angle_dec"].values
+    else:
+        upper_angles = sub_df["upper_angle_inc"].values
 
     # ===== 讀 keypoints =====
     keypoints = np.loadtxt(keypoints_txt_path)
@@ -473,6 +520,7 @@ def plot_kick_angle_waveform_with_lines_df(
         mask = frames >= ankle_min_frame
         frames = frames[mask]
         angles = angles[mask]
+        upper_angles = upper_angles[mask]
 
     # ===== 找局部最小值 & 過濾 ≤140° =====
     if len(angles) >= 3:
@@ -496,6 +544,7 @@ def plot_kick_angle_waveform_with_lines_df(
     # ===== 畫圖 =====
     fig, ax1 = plt.subplots(figsize=(15, 3))
     ax1.plot(frames, angles, label="Kick Angle")
+    ax1.plot(frames, upper_angles, label="Upper Body Angle", color="green", alpha=0.7)
     ax1.scatter(filtered_frames, filtered_angles, color="red", label="Minimum")
     for x, y in zip(filtered_frames, filtered_angles):
         ax1.text(x, y - 5, f"{y:.1f}", fontsize=9, color="black", ha="center")
@@ -548,7 +597,7 @@ def analyze_diving_phase(
         cap.release()
         raise RuntimeError("Cannot read video frame.")
     v_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    waterline_y = detect_waterline_y(frame, lower_blue, upper_blue)
+    waterline_y, _ = detect_waterline_y(frame, lower_blue, upper_blue)
 
     if waterline_y is None:
         cap.release()
@@ -722,9 +771,13 @@ def analyze_diving_phase(
     min_data_1 = (None, None)
     min_data_2 = (None, None)
     
+    trend_1 = "decreasing"
+    trend_2 = "decreasing"
+    
     if len(valid_laps) > 0:
         L1 = valid_laps[0]
         s1, e1 = L1["diving_segment"]
+        trend_1 = L1["trend"]
         series_frames_1 = L1["angle_data"]["frames"]
         series_angles_1 = L1["angle_data"]["angles"]
         min_data_1 = (L1["angle_data"]["minima_frames"], L1["angle_data"]["minima_values"])
@@ -732,6 +785,7 @@ def analyze_diving_phase(
     if len(valid_laps) > 1:
         L2 = valid_laps[1]
         s2, e2 = L2["diving_segment"]
+        trend_2 = L2["trend"]
         series_frames_2 = L2["angle_data"]["frames"]
         series_angles_2 = L2["angle_data"]["angles"]
         min_data_2 = (L2["angle_data"]["minima_frames"], L2["angle_data"]["minima_values"])
@@ -762,7 +816,7 @@ def analyze_diving_phase(
     fig1_path = os.path.join(base_dir, fig1_path_rel)
     
     kick_angle_fig_1 = plot_kick_angle_waveform_with_lines_df(
-        df_angles, keypoints_txt_path, s1, e1, "Phase 1", draw_aux_lines=False
+        df_angles, keypoints_txt_path, s1, e1, "Phase 1", draw_aux_lines=False, trend=trend_1
     )
     kick_angle_fig_1.savefig(fig1_path)
     plt.close(kick_angle_fig_1)
@@ -780,6 +834,7 @@ def analyze_diving_phase(
             "Phase 2",
             draw_aux_lines=True,
             crop_from_ankle_min=True,
+            trend=trend_2,
         )
         kick_angle_fig_2.savefig(fig2_path)
         plt.close(kick_angle_fig_2)

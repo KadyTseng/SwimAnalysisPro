@@ -2,15 +2,35 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'models.dart';
 import 'package:file_picker/file_picker.dart';
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
 
 class ApiService {
   // [DEPLOYMENT CONFIGURATION]
-  // 1. Local Development (default): 'http://127.0.0.1:9001'
-  // 2. Production Server: Change this to 'http://<YOUR_SERVER_IP>:9001'
-  // 3. Nginx Proxy: If using Nginx to serve both frontend and backend, you can use relative path like '/api' (requires code change to handle relative URLs properly) or just the full domain.
+  // Auto-detects the origin from the browser's current URL.
+  // This works because the frontend and backend are served from the SAME port.
+  // e.g., http://catslab.ee.ncku.edu.tw:9191
   final String baseUrl;
 
-  ApiService({this.baseUrl = 'http://127.0.0.1:9001'});
+  ApiService({String? baseUrl}) : baseUrl = baseUrl ?? _getDynamicBaseUrl();
+
+  static String _getDynamicBaseUrl() {
+    try {
+      final origin = html.window.location.origin;
+      // if served over https (reverse proxy), send requests to the secure domain
+      if (origin.startsWith('https://')) {
+        return 'https://catslab.ee.ncku.edu.tw/swimming_analysis/api/'; 
+      }
+      // https://catslab.ee.ncku.edu.tw/swimming_analysis/api
+      // if local frontend Development (http://localhost:19191)
+      if (origin.contains(':19191')) {
+        return origin.replaceAll(':19191', ':18181');
+      }
+      return 'http://127.0.0.1:18181/';
+    } catch (e) {
+      return 'https://catslab.ee.ncku.edu.tw/swimming_analysis/api/';
+    }
+  }
 
   /// Uploads a video file to the backend
   Future<AnalysisUploadResponse> uploadVideo(PlatformFile file) async {

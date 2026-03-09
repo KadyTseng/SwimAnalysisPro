@@ -78,9 +78,7 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploaded_videos"))
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "data/processed_videos"))
 POSE_MODEL_PATH = os.getenv("POSE_MODEL_PATH", "data/models/best_1.pt")
 STYLE_MODEL_PATH = os.getenv("STYLE_MODEL_PATH", "data/models/svm_model_new_3.pkl")
-FFMPEG_EXECUTABLE_PATH = os.getenv(
-    "FFMPEG_EXECUTABLE_PATH", r"C:\ffmpeg-8.0-essentials_build\bin\ffmpeg.exe"
-)
+FFMPEG_EXECUTABLE_PATH = os.getenv("FFMPEG_EXECUTABLE_PATH", "/usr/bin/ffmpeg")
 
 # 確保目錄存在
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -93,6 +91,7 @@ app = FastAPI(
     title="SwimAnalysisPro API",
     description="游泳影片分析後端 API",
     version="2.0.0",
+    root_path=os.getenv("FASTAPI_ROOT_PATH", "/swimming_analysis/api"),
 )
 
 # 配置 CORS
@@ -103,6 +102,13 @@ app.add_middleware(
     allow_methods=["*"],  # 允許所有方法 (GET, POST, OPTIONS, etc.)
     allow_headers=["*"],  # 允許所有標頭
 )
+
+# ===== 靜態檔案服務 =====
+from fastapi.staticfiles import StaticFiles
+# 確保靜態目錄存在
+os.makedirs("data", exist_ok=True)
+# 掛載 /data 路徑以便前端訪問影片
+app.mount("/data", StaticFiles(directory="data"), name="data")
 
 # ===== 狀態追蹤 (記憶體式，生產環境應改用 Redis/DB) =====
 analysis_db = {}
@@ -365,13 +371,17 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                     # Force print to console for direct visibility
                     print(f"\n[SERVER-LOG] 📢 {log_msg}\n", flush=True)
 
+        # 創建專屬輸出目錄以避免檔名衝突
+        unique_output_dir = OUTPUT_DIR / video_id
+        unique_output_dir.mkdir(parents=True, exist_ok=True)
+
         # 呼叫核心分析函式
         results = await asyncio.to_thread(
             run_full_analysis,
             POSE_MODEL_PATH,
             STYLE_MODEL_PATH,
             video_path,
-            str(OUTPUT_DIR),
+            str(unique_output_dir), # Pass unique dir
             FFMPEG_EXECUTABLE_PATH,
             status_callback,
         )
@@ -456,12 +466,20 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                                 for p_start, p_end in regions.get("Recovery regions", []):
                                     if p_start <= frame_idx <= p_end: phase_lbl = "Recovery"; break
                             
-                            pts.append({
-                                "frame": frame_idx,
-                                "timestamp_ms": (f / fps_val) * 1000,
-                                "value": float(vals[i]),
-                                "phase": phase_lbl
-                            })
+                            
+                            # CLEANING: Filter out NaN/None values to prevent chart artifacts
+                            import math
+                            val = float(vals[i])
+                            if val is not None and not math.isnan(val):
+                                pts.append({
+                                    "frame": frame_idx,
+                                    "timestamp_ms": (f / fps_val) * 1000,
+                                    "value": val,
+                                    "phase": phase_lbl
+                                })
+                    
+                    # SORTING: Crucial for Frontend Axis Logic (First/Last timestamp usage)
+                    pts.sort(key=lambda x: x["frame"])
                     
                     # Determine drawing direction
                     reverse_axis = ("decreasing" in range_key or "range1" in range_key)
@@ -527,13 +545,20 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                                 
                                 # FILTER: Only include points that match the identified stroke phases (from _a.txt)
                                 # This removes the initial "Diving/Streamline" gap which defaults to "Glide"
-                                if phase_lbl != "Unknown":
+                                # FILTER: Only include points that match the identified stroke phases (from _a.txt)
+                                # AND Clean NaNs
+                                import math
+                                val_f = float(values[i])
+                                if phase_lbl != "Unknown" and val_f is not None and not math.isnan(val_f):
                                     pts.append({
                                         "frame": f,
                                         "timestamp_ms": (f / fps_val) * 1000,
-                                        "value": float(values[i]),
+                                        "value": val_f,
                                         "phase": phase_lbl
                                     })
+                        
+                        # SORTING: Crucial for Frontend Axis Logic
+                        pts.sort(key=lambda x: x["frame"])
                         
                         stroke_plot_figs[range_key] = {
                             "plot_type": "phase",
@@ -599,9 +624,28 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                     if angle_data and angle_data.get("frames"):
                         # Ensure we strictly use the frames provided in angle_data
                         # which are restricted to the diving segment (s_d to e_d)
+                        # CLEANING: Filter NaNs from kick angle lists
+                        import math
+                        f_clean = []
+                        a_clean = []
+                        f_orig = angle_data["frames"]
+                        a_orig = angle_data["angles"]
+                        
+                        if f_orig and a_orig:
+                            for f, a in zip(f_orig, a_orig):
+                                if a is not None and not math.isnan(float(a)):
+                                    f_clean.append(f)
+                                    a_clean.append(a)
+                        
+                        # SORTING: Ensure frames are strictly ascending
+                        if f_clean and a_clean:
+                            combined = sorted(zip(f_clean, a_clean), key=lambda x: x[0])
+                            f_clean = [x[0] for x in combined]
+                            a_clean = [x[1] for x in combined]
+
                         da["kick_angle_analysis"][key] = {
-                            "frames": angle_data["frames"],
-                            "angles": angle_data["angles"],
+                            "frames": f_clean,
+                            "angles": a_clean,
                             "regions": {}, # No specific regions for kick angle yet
                             "segment_metrics": angle_data.get("segment_metrics", []),
                             "minima": _extract_minima(
@@ -854,13 +898,15 @@ async def upload_for_analysis(
     video_id = str(uuid4())
     # Use original filename to allow readable output filenames
     original_filename = Path(file.filename).name
-    file_path = UPLOAD_DIR / original_filename
+    # Sanitize filename: replace spaces and parentheses with underscores
+    safe_filename = original_filename.replace(" ", "_").replace("(", "").replace(")", "")
+    file_path = UPLOAD_DIR / safe_filename
 
     # If file exists, append timestamp to preserve uniqueness while keeping name readable
     if file_path.exists():
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        stem = Path(file.filename).stem
-        suffix = Path(file.filename).suffix
+        stem = Path(safe_filename).stem
+        suffix = Path(safe_filename).suffix
         file_path = UPLOAD_DIR / f"{stem}_{timestamp_str}{suffix}"
 
     try:
@@ -1275,6 +1321,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=9001,
-        reload=True,
+        port=8181,
+        reload=False,
     )
