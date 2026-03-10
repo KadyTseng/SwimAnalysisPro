@@ -29,10 +29,10 @@ nohup /home/kady6582/.conda/envs/Pool/bin/uvicorn main:app \
     > "$BACKEND_LOG" 2>&1 &
 
 echo "🌐 啟動前端 (19191)..."
-#  回到 build 層級
-cd "$BASE_DIR/frontend/build"
-ln -sfn web swimming_analysis
-nohup python3 -m http.server 19191 > "$FRONTEND_LOG" 2>&1 &
+cd "$BASE_DIR"
+nohup python3 serve_frontend.py > "$FRONTEND_LOG" 2>&1 &
+
+echo "✨ 前端已透過自製 serve_frontend.py 啟動，原生支援路由與 SPA Fallback。"
 
 echo "✨ 服務已重啟！"
 echo "---------------------------------------------------"
