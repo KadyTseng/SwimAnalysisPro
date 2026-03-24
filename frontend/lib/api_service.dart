@@ -19,16 +19,16 @@ class ApiService {
       final origin = html.window.location.origin;
       // if served over https (reverse proxy), send requests to the secure domain
       if (origin.startsWith('https://')) {
-        return 'https://catslab.ee.ncku.edu.tw/swimming_analysis/api/'; 
+        return 'https://catslab.ee.ncku.edu.tw/swimming_analysis/api'; 
       }
       // https://catslab.ee.ncku.edu.tw/swimming_analysis/api
       // if local frontend Development (http://localhost:19191)
       if (origin.contains(':19191')) {
         return origin.replaceAll(':19191', ':18181');
       }
-      return 'http://127.0.0.1:18181/';
+      return 'http://127.0.0.1:18181';
     } catch (e) {
-      return 'https://catslab.ee.ncku.edu.tw/swimming_analysis/api/';
+      return 'https://catslab.ee.ncku.edu.tw/swimming_analysis/api';
     }
   }
 

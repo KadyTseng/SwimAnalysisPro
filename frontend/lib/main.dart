@@ -1,17 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
 import 'screens/record_screen.dart';
 import 'screens/upload_screen.dart';
 
-List<CameraDescription> _cameras = [];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    _cameras = await availableCameras();
-  } catch (e) {
-    print('Camera init failed: $e');
-  }
   runApp(SwimAnalysisApp());
 }
 
@@ -50,7 +43,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final List<Widget> _screens = [
-      RecordScreen(cameras: _cameras),
+      RecordScreen(),
       UploadScreen(),
     ];
 
