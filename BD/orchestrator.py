@@ -117,7 +117,7 @@ def run_full_analysis(
 
     # Step 1: Pose Estimation
     print("[ORCHESTRATOR] 🔹 Step 1/7: Running Pose Estimation (YOLO)...", flush=True)
-    if status_callback: status_callback(10, "Step 1: Pose Estimation (YOLO)")
+    if status_callback: status_callback(10, "Capturing body pose...")
     logging.info("Step 1/7: Executing Pose Estimation (YOLOv11)...")
     
     # run_pose_estimation saves to output_dir with filename {base_name}_raw.txt
@@ -130,7 +130,7 @@ def run_full_analysis(
 
     # Step 2: Keypoints Interpolation and Saving
     print("[ORCHESTRATOR] 🔹 Step 2/7: Smoothing Keypoints...", flush=True)
-    if status_callback: status_callback(30, "Step 2: Smoothing Keypoints")
+    if status_callback: status_callback(30, "Optimizing motion trajectories...")
     logging.info("Step 2/7: Interpolating and smoothing keypoint data...")
 
     # --- Path Definition ---
@@ -163,9 +163,7 @@ def run_full_analysis(
     final_output_path = smoothed_txt_path 
 
     # Step 3: Underwater Dive and Kick Analysis (Get all results dict)
-    print("[ORCHESTRATOR] 🔹 Step 3/7: Analyzing Diving Phase & Turns...", flush=True)
-
-    if status_callback: status_callback(45, "Step 3: Diving & Kick Analysis")
+    if status_callback: status_callback(45, "Calculating diving metrics...")
     logging.info(
         "Step 3/7: Executing dive analysis, trajectory extraction, and wall touch detection..."
     )
@@ -201,7 +199,7 @@ def run_full_analysis(
 
     # Step 4: Stroke Style Recognition
     print("[ORCHESTRATOR] 🔹 Step 4/7: Recognizing Stroke Style...", flush=True)
-    if status_callback: status_callback(60, "Step 4: Stroke Style Recognition")
+    if status_callback: status_callback(60, "Recognizing stroke style...")
     logging.info("Step 4/7: Executing stroke style recognition...")
     try:
         stroke_label_int = analyze_stroke(video_path, final_output_path, style_model_path)
@@ -220,7 +218,7 @@ def run_full_analysis(
 
     # Step 5: Stroke Phase Segmentation, Counting, and Waveform Generation
     print("[ORCHESTRATOR] 🔹 Step 5/7: Phase Analysis & Waveform Generation...", flush=True)
-    if status_callback: status_callback(75, "Step 5: Stroke Analysis & Graphs")
+    if status_callback: status_callback(75, "Analyzing stroke metrics...")
     logging.info(
         "Step 5/7: Executing stroke phase segmentation and waveform generation..."
     )
