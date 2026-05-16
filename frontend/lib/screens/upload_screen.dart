@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import '../api_service.dart';
 import 'analysis_progress_screen.dart';
 
 class UploadScreen extends StatefulWidget {
@@ -10,14 +9,12 @@ class UploadScreen extends StatefulWidget {
 
 class _UploadScreenState extends State<UploadScreen> {
   PlatformFile? _selectedFile;
-  bool _isUploading = false;
-  final ApiService _apiService = ApiService();
 
   Future<void> _pickFile() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.video,
       allowMultiple: false,
-      withData: true, // Important for web to get bytes
+      withData: true,
     );
 
     if (result != null) {
@@ -27,45 +24,27 @@ class _UploadScreenState extends State<UploadScreen> {
     }
   }
 
-  Future<void> _uploadAndAnalyze() async {
+  void _onAnalyzePressed() {
     if (_selectedFile == null) return;
 
-    setState(() {
-      _isUploading = true;
-    });
+    // 【重要修復】先用區域變數抓取檔案，避免被下方的 setState 歸零
+    final fileToUpload = _selectedFile;
 
-    try {
-      final response = await _apiService.uploadVideo(_selectedFile!);
-      
-      if (mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => AnalysisProgressScreen(videoId: response.videoId),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isUploading = false;
-        });
-      }
-    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => AnalysisProgressScreen(uploadFile: fileToUpload),
+      ),
+    );
+
+    // 重置選取狀態
+    setState(() {
+      _selectedFile = null;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Swim Analysis Pro'),
-        backgroundColor: Colors.blueAccent,
-      ),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -80,20 +59,16 @@ class _UploadScreenState extends State<UploadScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.pool,
-                  size: 80,
-                  color: Colors.blueAccent,
-                ),
-                SizedBox(height: 24),
+                Icon(Icons.analytics_outlined, size: 80, color: Colors.blueAccent),
+                const SizedBox(height: 24),
                 Text(
-                  'Upload Your Swim Video',
+                  'Analysis & Playback',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: Colors.blue[900],
                   ),
                 ),
-                SizedBox(height: 40),
+                const SizedBox(height: 40),
                 if (_selectedFile != null) ...[
                   Card(
                     elevation: 4,
@@ -102,51 +77,48 @@ class _UploadScreenState extends State<UploadScreen> {
                       child: Row(
                         children: [
                           Icon(Icons.video_file, color: Colors.blue),
-                          SizedBox(width: 16),
+                          const SizedBox(width: 16),
                           Expanded(
                             child: Text(
                               _selectedFile!.name,
-                              style: TextStyle(fontSize: 16),
+                              style: const TextStyle(fontSize: 16),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           IconButton(
-                            icon: Icon(Icons.close),
+                            icon: const Icon(Icons.close),
                             onPressed: () => setState(() => _selectedFile = null),
                           )
                         ],
                       ),
                     ),
                   ),
-                  SizedBox(height: 24),
+                  const SizedBox(height: 24),
                 ],
-                
-                _isUploading
-                  ? CircularProgressIndicator()
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _pickFile,
-                          icon: Icon(Icons.folder_open),
-                          label: Text(_selectedFile == null ? 'Select Video' : 'Change Video'),
-                          style: ElevatedButton.styleFrom(
-                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                          ),
-                        ),
-                        SizedBox(width: 16),
-                        ElevatedButton.icon(
-                          onPressed: _selectedFile != null ? _uploadAndAnalyze : null,
-                          icon: Icon(Icons.analytics),
-                          label: Text('Analyze'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            foregroundColor: Colors.white,
-                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                          ),
-                        ),
-                      ],
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _pickFile,
+                      icon: const Icon(Icons.folder_open),
+                      label: Text(_selectedFile == null ? 'Select Video' : 'Change Video'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
                     ),
+                    const SizedBox(width: 16),
+                    ElevatedButton.icon(
+                      onPressed: _selectedFile != null ? _onAnalyzePressed : null,
+                      icon: const Icon(Icons.play_circle_filled),
+                      label: const Text('Start Analysis'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueAccent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),

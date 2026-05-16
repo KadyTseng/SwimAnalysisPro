@@ -11,3 +11,10 @@
 # 忽略 PyTorch 暫存模型檔
 *.pth
 *.ckpt
+
+# 忽略分析產生的大量資料夾與 Log
+data/
+uploaded_videos/
+test_outputs/
+*.log
+frontend/*.txt
