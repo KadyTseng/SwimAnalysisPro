@@ -1,5 +1,0 @@
-
-Compiling lib/main.dart for the Web...                          
-Font asset "CupertinoIcons.ttf" was tree-shaken, reducing it from 257628 to 2168 bytes (99.2% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
-Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 11272 bytes (99.3% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
-Compiling lib/main.dart for the Web...                             16.2s

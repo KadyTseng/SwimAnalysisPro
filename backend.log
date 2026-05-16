@@ -1,7 +1,0 @@
-2026-03-19 00:01:59.764 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
-INFO:     Started server process [423389]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:18181 (Press CTRL+C to quit)
-INFO:     140.116.187.75:0 - "GET /swimming_analysis/api/docs HTTP/1.1" 200 OK
-INFO:     140.116.187.75:0 - "GET /swimming_analysis/api/openapi.json HTTP/1.1" 200 OK
