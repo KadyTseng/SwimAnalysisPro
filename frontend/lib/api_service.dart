@@ -40,23 +40,9 @@ class ApiService {
     var request = http.MultipartRequest('POST', uri);
     
     if (file.bytes != null) {
-      // Web: use bytes
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          file.bytes!,
-          filename: file.name,
-        ),
-      );
+      request.files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name));
     } else if (file.path != null) {
-      // Mobile/Desktop: use path
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'file',
-          file.path!,
-          filename: file.name,
-        ),
-      );
+      request.files.add(await http.MultipartFile.fromPath('file', file.path!, filename: file.name));
     } else {
       throw Exception('File path and bytes are both null');
     }
@@ -64,11 +50,34 @@ class ApiService {
     var streamedResponse = await request.send();
     var response = await http.Response.fromStream(streamedResponse);
 
-    if (response.statusCode == 202) {
+    if (response.statusCode == 202 || response.statusCode == 200 || response.statusCode == 201) {
       return AnalysisUploadResponse.fromJson(jsonDecode(response.body));
     } else {
       throw Exception('Failed to upload video: ${response.statusCode} ${response.body}');
     }
+  }
+
+  /// Uploads a Blob (for recordings)
+  Future<String?> uploadBlob(html.Blob blob, {bool skipAnalysis = false}) async {
+    final uri = Uri.parse('$baseUrl/analysis/upload');
+    final formData = html.FormData();
+    final filename = 'record_${DateTime.now().millisecondsSinceEpoch}.webm';
+    formData.appendBlob('file', blob, filename);
+    if (skipAnalysis) {
+      formData.append('skip_analysis', 'true');
+    }
+    
+    final response = await html.HttpRequest.request(
+      uri.toString(),
+      method: 'POST',
+      sendData: formData,
+    );
+
+    if (response.status == 200 || response.status == 201 || response.status == 202) {
+      final respData = jsonDecode(response.responseText ?? '{}');
+      return respData['video_id'];
+    }
+    return null;
   }
 
   /// Checks the status of the analysis

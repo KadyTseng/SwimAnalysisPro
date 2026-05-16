@@ -85,6 +85,7 @@ class _ResultScreenState extends State<ResultScreen> {
         videoPlayerController: _videoPlayerController!,
         autoPlay: true,
         looping: true,
+        hideControlsTimer: const Duration(milliseconds: 300),
         aspectRatio: _videoPlayerController!.value.aspectRatio,
         errorBuilder: (context, errorMessage) {
           return Center(
@@ -113,135 +114,145 @@ class _ResultScreenState extends State<ResultScreen> {
   Widget build(BuildContext context) {
     final result = widget.result;
 
+    // Calculate aspect ratio dynamically or default to 16:9
+    final double aspectRatio = _isVideoInitialized && _videoPlayerController != null && _videoPlayerController!.value.aspectRatio > 0
+        ? _videoPlayerController!.value.aspectRatio
+        : 16 / 9;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final videoHeight = screenWidth / aspectRatio;
+
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Custom Header (Not pinned, scrolls with content)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 16.0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.arrow_back),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    Expanded(
-                      child: Center(
-                        child: Text(
-                          'Analysis Dashboard',
-                          style: Theme.of(context).textTheme.headlineSmall,
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Custom Header (Not pinned, scrolls with content)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 16.0),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.arrow_back),
+                          onPressed: () => Navigator.of(context).pop(),
                         ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.download),
-                      onPressed: () => launchUrl(Uri.parse(_apiService.getDownloadUrl(result.videoId))),
-                      tooltip: 'Download Video',
-                    ),
-                  ],
-                ),
-              ),
-
-              // 1. Metrics Section (Displayed TOP of video)
-              Container(
-                color: Colors.white,
-                padding: const EdgeInsets.all(16.0),
-                child: _buildHeaderMetrics(result),
-              ),
-
-              Divider(height: 1),
-
-              // 2. Video Player Section
-              Container(
-                height: 400,
-                width: double.infinity,
-                color: Colors.black,
-                child: _isVideoInitialized
-                    ? ClipRect(
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // 1. Scaled Video (Cover)
-                            SizedBox.expand(
-                              child: FittedBox(
-                                fit: BoxFit.cover,
-                                child: SizedBox(
-                                  width: _videoPlayerController!.value.size.width,
-                                  height: _videoPlayerController!.value.size.height,
-                                  child: Chewie(controller: _chewieController!),
-                                ),
-                              ),
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              'Analysis Dashboard',
+                              style: Theme.of(context).textTheme.headlineSmall,
                             ),
-                          
-                            // PiP Focus Window
-                          if (_showFocusPiP && _isFocusInitialized && _focusVideoController!.value.isInitialized)
-                            Positioned(
-                              top: 10,
-                              right: 10,
-                              width: _focusVideoController!.value.size.width * 1.3,
-                              height: _focusVideoController!.value.size.height * 1.3,
-                              child: GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _showFocusPiP = false;
-                                  });
-                                },
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black,
-                                    border: Border.all(color: Colors.white, width: 2),
-                                    boxShadow: [BoxShadow(blurRadius: 5, color: Colors.black54)]
-                                  ),
-                                  child: Stack(
-                                    children: [
-                                      VideoPlayer(_focusVideoController!),
-                                      Positioned(
-                                        top: 2, right: 2,
-                                        child: Icon(Icons.close, color: Colors.white, size: 16)
-                                      )
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.download),
+                          onPressed: () => launchUrl(Uri.parse(_apiService.getDownloadUrl(result.videoId))),
+                          tooltip: 'Download Video',
+                        ),
+                      ],
+                    ),
+                  ),
 
-                            // Toggle Button
-                            if (_isFocusInitialized && !_showFocusPiP)
+                  // 1. Metrics Section (Displayed TOP of video)
+                  Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(16.0),
+                    child: _buildHeaderMetrics(result),
+                  ),
+
+                  Divider(height: 1),
+                ],
+              ),
+            ),
+
+            // 2. Video Player Section (Sticky)
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _StickyVideoDelegate(
+                maxHeight: videoHeight,
+                minHeight: videoHeight, // Fixed size, doesn't shrink
+                child: Container(
+                  width: double.infinity,
+                  color: Colors.black, // Still black inside if AspectRatio leaves tiny borders, but player expands fully
+                  child: _isVideoInitialized
+                      ? AspectRatio(
+                          aspectRatio: _videoPlayerController!.value.aspectRatio,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // 1. Natural Video Player
+                              Chewie(controller: _chewieController!),
+                            
+                              // PiP Focus Window
+                            if (_showFocusPiP && _isFocusInitialized && _focusVideoController!.value.isInitialized)
                               Positioned(
                                 top: 10,
                                 right: 10,
-                                child: Tooltip(
-                                  message: "Show Focus View",
-                                  child: FloatingActionButton.small(
-                                    backgroundColor: Colors.white.withOpacity(0.8),
-                                    child: Icon(Icons.center_focus_strong, color: Colors.blueAccent),
-                                    onPressed: () {
-                                      setState(() {
-                                        _showFocusPiP = true;
-                                      });
-                                    },
+                                width: _focusVideoController!.value.size.width * 0.7,
+                                height: _focusVideoController!.value.size.height * 0.7,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      _showFocusPiP = false;
+                                    });
+                                  },
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                      boxShadow: [BoxShadow(blurRadius: 5, color: Colors.black54)]
+                                    ),
+                                    child: Stack(
+                                      children: [
+                                        VideoPlayer(_focusVideoController!),
+                                        Positioned(
+                                          top: 2, right: 2,
+                                          child: Icon(Icons.close, color: Colors.white, size: 16)
+                                        )
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
-                          ],
-                        ),
-                      )
-                    : Center(child: CircularProgressIndicator(color: Colors.white)),
-              ),
 
-              // 3. Charts/Waveforms Section (Displayed BELOW video) with Tabs
-              if ((result.strokePlotFigs?.isNotEmpty ?? false) || (result.divingPlotFigs?.isNotEmpty ?? false))
-                _buildChartTabs(context, result)
-              else
-                 Padding(
-                   padding: EdgeInsets.all(16),
-                   child: Text('No waveform data available for this analysis.'),
-                 ),
-            ],
-          ),
+                              // Toggle Button
+                              if (_isFocusInitialized && !_showFocusPiP)
+                                Positioned(
+                                  top: 10,
+                                  right: 10,
+                                  child: Tooltip(
+                                    message: "Show Focus View",
+                                    child: FloatingActionButton.small(
+                                      backgroundColor: Colors.white.withOpacity(0.8),
+                                      child: Icon(Icons.center_focus_strong, color: Colors.blueAccent),
+                                      onPressed: () {
+                                        setState(() {
+                                          _showFocusPiP = true;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        )
+                      : Center(child: CircularProgressIndicator(color: Colors.white)),
+                ),
+              ),
+            ),
+
+            // 3. Charts/Waveforms Section (Displayed BELOW video) with Tabs
+            SliverToBoxAdapter(
+              child: ((result.strokePlotFigs?.isNotEmpty ?? false) || (result.divingPlotFigs?.isNotEmpty ?? false))
+                  ? _buildChartTabs(context, result)
+                  : Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('No waveform data available for this analysis.'),
+                    ),
+            ),
+          ],
         ),
       ),
     );
@@ -343,7 +354,7 @@ class _ResultScreenState extends State<ResultScreen> {
             ),
           ),
           Container(
-            height: 500,
+            height: 350,
             padding: EdgeInsets.all(16),
             child: TabBarView(
               children: tabs.map((t) {
@@ -548,4 +559,30 @@ class _ChartTabItem {
     required this.typeOrder,
     required this.isKickAngle
   });
+}
+
+class _StickyVideoDelegate extends SliverPersistentHeaderDelegate {
+  final Widget child;
+  final double maxHeight;
+  final double minHeight;
+
+  _StickyVideoDelegate({required this.child, required this.maxHeight, required this.minHeight});
+
+  @override
+  double get minExtent => minHeight;
+
+  @override
+  double get maxExtent => maxHeight < minHeight ? minHeight : maxHeight;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return SizedBox.expand(child: child);
+  }
+
+  @override
+  bool shouldRebuild(covariant _StickyVideoDelegate oldDelegate) {
+    return oldDelegate.maxHeight != maxHeight || 
+           oldDelegate.minHeight != minHeight || 
+           oldDelegate.child != child;
+  }
 }

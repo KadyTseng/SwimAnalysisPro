@@ -46,7 +46,7 @@ from uuid import uuid4
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.responses import FileResponse
 
 from api_schemas import (
@@ -365,10 +365,10 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
                 if message:
                     analysis_db[video_id]["current_step"] = message
                     
-                    # Enhanced Logging for Terminal Visibility
-                    log_msg = f"[{video_id}] 🏊 PROGRESS: {progress_value}% - {message}"
+                    # 【核心恢復】讓 Terminal 顯示真正的分析步驟
+                    log_msg = f"[{video_id[:8]}] 🏊 ANALYSIS LOG: {message} ({progress_value}%)"
                     logger.info(log_msg)
-                    # Force print to console for direct visibility
+                    # 確保噴在控制台
                     print(f"\n[SERVER-LOG] 📢 {log_msg}\n", flush=True)
 
         # 創建專屬輸出目錄以避免檔名衝突
@@ -862,6 +862,7 @@ async def root():
 @app.post("/analysis/upload", response_model=AnalysisUploadResponse, status_code=202)
 async def upload_for_analysis(
     file: UploadFile = File(...),
+    skip_analysis: bool = Form(False),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> AnalysisUploadResponse:
     """
@@ -928,13 +929,19 @@ async def upload_for_analysis(
         }
 
         # 啟動後台分析任務
-        background_tasks.add_task(run_analysis_task, video_id, str(file_path))
+        if not skip_analysis:
+            background_tasks.add_task(run_analysis_task, video_id, str(file_path))
+            msg = "影片已接收，正在後台分析中..."
+        else:
+            analysis_db[video_id]["status"] = "uploaded"
+            analysis_db[video_id]["current_step"] = "跳過自動分析"
+            msg = "影片已接收，不進行自動分析。"
 
         logger.info(f"[{video_id}] 影片已上傳: {file.filename}")
 
         return AnalysisUploadResponse(
             video_id=video_id,
-            message="影片已接收，正在後台分析中...",
+            message=msg,
             status_endpoint=f"/analysis/{video_id}/status",
         )
 

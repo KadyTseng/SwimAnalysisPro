@@ -1,216 +1,24 @@
-// import 'package:flutter/material.dart';
-// import 'package:camera/camera.dart';
-// import 'screen_share.dart';
-
-// class RecordScreen extends StatefulWidget {
-//   final List<CameraDescription> cameras;
-
-//   const RecordScreen({Key? key, required this.cameras}) : super(key: key);
-
-//   @override
-//   _RecordScreenState createState() => _RecordScreenState();
-// }
-
-// class _RecordScreenState extends State<RecordScreen> {
-//   CameraController? _controller;
-//   int _selectedCameraIndex = 0;
-//   bool _isInit = false;
-//   bool _useScreenShare = false;
-
-//   @override
-//   void initState() {
-//     super.initState();
-//     if (widget.cameras.isNotEmpty) {
-//       _initCamera(_selectedCameraIndex);
-//     }
-//   }
-
-//   Future<void> _initCamera(int index) async {
-//     final camera = widget.cameras[index];
-//     _controller = CameraController(
-//       camera,
-//       ResolutionPreset.high,
-//       enableAudio: false,
-//     );
-
-//     try {
-//       await _controller!.initialize();
-//       if (mounted) {
-//         setState(() {
-//           _isInit = true;
-//           _useScreenShare = false; // Successfully initialized camera
-//         });
-//       }
-//     } catch (e) {
-//       print("Camera init error: $e");
-//       if (mounted) {
-//         setState(() {
-//           _useScreenShare = true; // Fallback to screen share
-//           _isInit = false;
-//         });
-//       }
-//     }
-//   }
-
-//   @override
-//   void dispose() {
-//     _controller?.dispose();
-//     super.dispose();
-//   }
-
-//   void _switchCamera() {
-//     if (widget.cameras.length < 2) return;
-//     setState(() {
-//       _isInit = false;
-//       _selectedCameraIndex = (_selectedCameraIndex + 1) % widget.cameras.length;
-//     });
-//     _initCamera(_selectedCameraIndex);
-//   }
-
-//   @override
-//   Widget build(BuildContext context) {
-//     if (widget.cameras.isEmpty && !_useScreenShare) {
-//       return Center(
-//         child: Column(
-//           mainAxisSize: MainAxisSize.min,
-//           children: [
-//             Text('No cameras found. Please check your device settings.'),
-//             SizedBox(height: 16),
-//             ElevatedButton(
-//               onPressed: () {
-//                 setState(() {
-//                   _useScreenShare = true;
-//                 });
-//               },
-//               child: Text("Try Screen Sharing"),
-//             )
-//           ],
-//         )
-//       );
-//     }
-
-//     return Scaffold(
-//       body: Stack(
-//         children: [
-//           // Content Area
-//           if (_useScreenShare)
-//             ScreenShareView(
-//               onStop: () {
-//                 setState(() {
-//                   _useScreenShare = false;
-//                 });
-//               },
-//             )
-//           else if (_isInit && _controller != null && _controller!.value.isInitialized)
-//             Center(child: CameraPreview(_controller!))
-//           else
-//             Center(child: CircularProgressIndicator()),
-
-//           // Overlays
-//           Positioned(
-//             top: 20,
-//             left: 20,
-//             child: Container(
-//               padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-//               decoration: BoxDecoration(
-//                 color: Colors.black54,
-//                 borderRadius: BorderRadius.circular(20),
-//               ),
-//               child: Row(
-//                 children: [
-//                   Icon(Icons.circle, color: Colors.red, size: 12),
-//                   SizedBox(width: 8),
-//                   Text(
-//                     'Live Monitor', 
-//                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
-//                   ),
-//                 ],
-//               ),
-//             ),
-//           ),
-
-//           // Mode Switcher (Screen Share vs Camera)
-//           Positioned(
-//             bottom: 30,
-//             right: widget.cameras.length > 1 ? 100 : 30, // Offset if camera switcher exists
-//             child: FloatingActionButton(
-//               heroTag: 'modeSwitcher',
-//               onPressed: () {
-//                 if (_useScreenShare) {
-//                   setState(() => _useScreenShare = false);
-//                   if (!_isInit) _initCamera(_selectedCameraIndex);
-//                 } else {
-//                   setState(() {
-//                     _useScreenShare = true;
-//                   });
-//                 }
-//               },
-//               backgroundColor: _useScreenShare ? Colors.red : Colors.blue,
-//               foregroundColor: Colors.white,
-//               tooltip: _useScreenShare ? 'Stop Screen Share' : 'Start Screen Share',
-//               child: Icon(_useScreenShare ? Icons.stop_screen_share : Icons.screen_share),
-//             ),
-//           ),
-            
-//           // Camera Switcher
-//           if (widget.cameras.length > 1 && !_useScreenShare)
-//             Positioned(
-//               bottom: 30,
-//               right: 30,
-//               child: FloatingActionButton(
-//                 heroTag: 'cameraSwitcher',
-//                 onPressed: _switchCamera,
-//                 child: Icon(Icons.cameraswitch),
-//                 backgroundColor: Colors.white,
-//                 foregroundColor: Colors.black,
-//               ),
-//             ),
-            
-//           Positioned(
-//             bottom: 30,
-//             left: 0,
-//             right: 0,
-//             child: Center(
-//               child: Text(
-//                 'Monitoring Stream (OBS Virtual Camera)',
-//                 style: TextStyle(
-//                   color: Colors.white,
-//                   shadows: [Shadow(color: Colors.black, blurRadius: 4)],
-//                   fontSize: 16
-//                 ),
-//               ),
-//             ),
-//           )
-//         ],
-//       ),
-//     );
-//   }
-// }
-
-
-
-
-
-
 import 'package:flutter/material.dart';
-// import 'screen_share.dart';
 import 'dart:html' as html;
 import 'dart:ui' as ui;
 import 'dart:convert';
+import 'dart:async';
+import '../api_service.dart';
 
-class RecordScreen extends StatefulWidget {
+class SplitTimerScreen extends StatefulWidget {
   final Function(int, {String? videoId, dynamic uploadFile})? onNavigate;
 
-  const RecordScreen({Key? key, this.onNavigate}) : super(key: key);
-
+  const SplitTimerScreen({Key? key, this.onNavigate}) : super(key: key);
 
   @override
-  _RecordScreenState createState() => _RecordScreenState();
+  _SplitTimerScreenState createState() => _SplitTimerScreenState();
 }
 
-class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClientMixin {
+class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
+
+  final ApiService _apiService = ApiService();
 
   html.VideoElement? _videoElement;
   List<html.MediaDeviceInfo> _cameras = [];
@@ -218,8 +26,7 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
   int _selectedCameraIndex = 0;
   bool _isInit = false;
 
-
-  final String _viewType = "cameraVideo";
+  final String _viewType = "cameraVideo_split";
 
   html.WebSocket? _obsSocket;
   bool _obsConnected = false;
@@ -233,7 +40,9 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
   String? _completionStatus;
   DateTime? _recordingStartTime;
 
-
+  int _countdownValue = 0;
+  bool _isCountingDown = false;
+  Timer? _countdownTimer;
 
   @override
   void initState() {
@@ -353,6 +162,37 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
     }
   }
 
+  void _startCountdownAndRecord() {
+    if (_isCountingDown || _obsRecording) return;
+    
+    setState(() {
+      _isCountingDown = true;
+      _countdownValue = 5;
+    });
+
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        _countdownValue--;
+      });
+      if (_countdownValue <= 0) {
+        timer.cancel();
+        setState(() {
+          _isCountingDown = false;
+        });
+        _startObsRecording();
+      }
+    });
+  }
+
+  void _cancelCountdown() {
+    if (_countdownTimer != null && _countdownTimer!.isActive) {
+      _countdownTimer!.cancel();
+    }
+    setState(() {
+      _isCountingDown = false;
+    });
+  }
+
   void _startObsRecording() {
     if (_obsConnected && _obsSocket != null) {
       // 先發送 OBS 指令
@@ -448,7 +288,6 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
 
     if (_recordedChunks.isEmpty) return;
 
-    // 1. 先顯示錄製完成的狀態 (Rule 4: 停留 3 秒)
     setState(() {
       _isAutoUploading = true;
       _completionStatus = '影片錄製完成！正在上傳至平台...';
@@ -456,8 +295,18 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
 
     final blob = html.Blob(_recordedChunks, 'video/webm');
 
-    // 確保顯示 3 秒
-    await Future.delayed(const Duration(seconds: 3));
+    final uploadFuture = _apiService.uploadBlob(blob, skipAnalysis: true);
+    final delayFuture = Future.delayed(const Duration(seconds: 3));
+
+    try {
+      await Future.wait([uploadFuture, delayFuture]);
+    } catch (e) {
+      print('Upload failed: $e');
+      setState(() {
+        _completionStatus = '上傳失敗: $e';
+      });
+      await Future.delayed(const Duration(seconds: 2));
+    }
 
     if (mounted) {
       setState(() {
@@ -465,10 +314,9 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
         _completionStatus = null;
       });
 
-      // 2. 直接跳轉到進度頁面，並傳入 Blob
-      // 注意：這裡我們需要確保 AnalysisProgressScreen 能處理 Blob
+      // 2. 直接跳轉到分析頁面(UploadScreen)
       if (widget.onNavigate != null) {
-        widget.onNavigate!(2, uploadFile: blob); // 修改參數傳遞
+        widget.onNavigate!(2); 
       }
     }
   }
@@ -615,6 +463,7 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
 
   @override
   void dispose() {
+    _cancelCountdown();
     _stopCamera();
     _obsSocket?.close();
     super.dispose();
@@ -633,11 +482,11 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
       body: Stack(
         children: [
           /// Camera / ScreenShare 畫面
-          if (_isInit && !_isAutoUploading)
+          if (_isInit && !_isAutoUploading && !_isCountingDown)
             Center(
               child: HtmlElementView(viewType: _viewType),
             )
-          else if (!_isAutoUploading)
+          else if (!_isAutoUploading && !_isCountingDown)
             const Center(child: CircularProgressIndicator()),
 
           /// 錄製完成提示 Overlay
@@ -661,6 +510,25 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ),
+            ),
+
+          /// 倒數計時 Overlay
+          if (_isCountingDown)
+            Container(
+              color: Colors.black45,
+              child: Center(
+                child: Text(
+                  '$_countdownValue',
+                  style: const TextStyle(
+                    fontSize: 250,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    shadows: [
+                      Shadow(color: Colors.black, blurRadius: 15)
+                    ],
                   ),
                 ),
               ),
@@ -693,16 +561,28 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
                   if (_cameras.isNotEmpty && (_cameras[_selectedCameraIndex].label ?? '').toLowerCase().contains('obs')) ...[
                     const SizedBox(width: 16),
                     if (!_obsRecording)
-                      ElevatedButton.icon(
-                        onPressed: _startObsRecording,
-                        icon: const Icon(Icons.radio_button_checked, color: Colors.white, size: 18),
-                        label: const Text('Start Recording'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green[600],
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        ),
-                      )
+                      if (_isCountingDown)
+                        ElevatedButton.icon(
+                          onPressed: _cancelCountdown,
+                          icon: const Icon(Icons.cancel, color: Colors.white, size: 18),
+                          label: Text('Cancel ($_countdownValue)'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange[700],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          ),
+                        )
+                      else
+                        ElevatedButton.icon(
+                          onPressed: _startCountdownAndRecord,
+                          icon: const Icon(Icons.radio_button_checked, color: Colors.white, size: 18),
+                          label: const Text('Start Recording'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[600],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          ),
+                        )
                     else
                       ElevatedButton.icon(
                         onPressed: _stopObsRecording,
@@ -721,8 +601,6 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
           ),
         ),
 
-
-
           /// Camera 切換 & 重新整理
           if (_cameras.length > 1)
             Positioned(
@@ -731,7 +609,7 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
               child: Row(
                 children: [
                   FloatingActionButton(
-                    heroTag: 'refreshCam',
+                    heroTag: 'refreshCamSplit',
                     onPressed: () {
                       _getAllCameras();
                       if (_obsConnected) {
@@ -751,7 +629,7 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
                   ),
                   const SizedBox(width: 8),
                   FloatingActionButton(
-                    heroTag: 'cameraSwitcher',
+                    heroTag: 'cameraSwitcherSplit',
                     onPressed: _switchCamera,
                     child: const Icon(Icons.cameraswitch),
                     backgroundColor: Colors.white,

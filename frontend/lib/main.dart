@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'screens/record_screen.dart';
+import 'screens/split_timer_screen.dart';
 import 'screens/upload_screen.dart';
-
+import 'screens/analysis_progress_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,25 +43,49 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 這裡回歸原始分頁：0:錄影, 1:計時器, 2:上傳頁(Analysis & Playback)
     final List<Widget> _screens = [
-      RecordScreen(),
+      RecordScreen(onNavigate: (index, {videoId, uploadFile}) {
+        setState(() { _currentIndex = index; });
+        if (uploadFile != null || videoId != null) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => AnalysisProgressScreen(
+                videoId: videoId,
+                uploadFile: uploadFile,
+              ),
+            ),
+          );
+        }
+      }),
+      SplitTimerScreen(onNavigate: (index, {videoId, uploadFile}) {
+        setState(() { _currentIndex = index; });
+        // NOTE: SplitTimerScreen handles upload internally and skips auto-analysis. 
+        // It just needs to switch the tab to UploadScreen.
+      }),
       UploadScreen(),
     ];
 
     return Scaffold(
-      body: _screens[_currentIndex],
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _screens,
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
+          setState(() { _currentIndex = index; });
         },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.videocam_outlined),
             selectedIcon: Icon(Icons.videocam),
-            label: 'Live Monitor (OBS)',
+            label: 'Live Monitor',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.timer_outlined),
+            selectedIcon: Icon(Icons.timer),
+            label: 'Split Timer',
           ),
           NavigationDestination(
             icon: Icon(Icons.analytics_outlined),
