@@ -1,4 +1,4 @@
-﻿# diving_analyzer_track_angles.py
+# diving_analyzer_track_angles.py
 
 import numpy as np
 import pandas as pd
@@ -172,8 +172,8 @@ def detect_laps_by_hip_x(df, min_lap_duration=100):
     
     回傳: list of (start_frame, end_frame, trend_label)
     """
-    # 1. 取出並平滑 Hip X
-    x_raw = df["hip_x"].values
+    # 1. 取出並平滑 BBox X (BBox X 比 Hip X 更能可靠反映泳者實際位置，避免關鍵點插值誤差)
+    x_raw = df["bbox_x"].values
     if len(x_raw) < min_lap_duration:
         return [(df["frame_id"].min(), df["frame_id"].max(), "unknown")]
         
@@ -223,19 +223,38 @@ def detect_laps_by_hip_x(df, min_lap_duration=100):
         f_start = frames[idx_s]
         f_end = frames[idx_e]
         
-        # 判斷趨勢: 頭尾比較
+        # 判斷趨勢: 頭尾比較，並配合持續遞增/遞減的方向一致性判定
         x_s = x_smooth[idx_s]
         x_e = x_smooth[idx_e]
         diff = x_e - x_s
         
-        # 設定一個閾值，沒有顯著移動就不算 Lap (可能是休息)
-        move_threshold = 200 # pixel
+        # 額外計算區間內的持續遞增與遞減影格數比例
+        x_seg = x_smooth[idx_s:idx_e+1]
+        diffs_seg = np.diff(x_seg)
+        num_inc = np.sum(diffs_seg > 0)
+        num_dec = np.sum(diffs_seg < 0)
+        total_steps = len(diffs_seg)
         
+        ratio_inc = num_inc / total_steps if total_steps > 0 else 0
+        ratio_dec = num_dec / total_steps if total_steps > 0 else 0
+        
+        # 設定位移與方向一致性寬鬆門檻
+        move_threshold = 200        # 標準位移門檻 (pixel)
+        relaxed_move_threshold = 80  # 寬鬆位移門檻（如果方向一致性高則適用）
+        
+        duration_frames = idx_e - idx_s
         trend = "static"
-        if diff < -move_threshold:
-            trend = "decreasing" # 數值變小 (去程?)
-        elif diff > move_threshold:
-            trend = "increasing" # 數值變大 (回程?)
+        
+        # 遞增或遞減判定為 Lap 的附加條件：持續時間必須大於 500 幀
+        if duration_frames > 500:
+            if diff < -move_threshold:
+                trend = "decreasing" # 數值變小 (去程?)
+            elif diff > move_threshold:
+                trend = "increasing" # 數值變大 (回程?)
+            elif diff < -relaxed_move_threshold and ratio_dec >= 0.70:
+                trend = "decreasing" # 位移較小，但持續遞減比例高，判定為去程
+            elif diff > relaxed_move_threshold and ratio_inc >= 0.70:
+                trend = "increasing" # 位移較小，但持續遞增比例高，判定為回程
             
         laps.append((f_start, f_end, trend))
         
@@ -877,11 +896,11 @@ if current_dir not in sys.path:
 # Import dependencies (Lazy import inside check to avoid top-level failures if env issues)
 try:
     from BD.pose_estimator import run_pose_estimation
-    from BD.txt_base import process_keypoints_txt
+    from BD.freestyle_pose_estimator.txt_base import process_keypoints_txt
 except ImportError:
     try:
         from pose_estimator import run_pose_estimation
-        from txt_base import process_keypoints_txt
+        from freestyle_pose_estimator.txt_base import process_keypoints_txt
     except ImportError as e:
         print(f"Warning: Could not import Pose/Txt modules: {e}")
 

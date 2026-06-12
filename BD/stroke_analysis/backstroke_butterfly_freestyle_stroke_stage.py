@@ -106,8 +106,8 @@ def extract_columns_in_range(txt_path, range1, range2):
             col11 = float(parts[11])
             col16 = float(parts[16])
             col17 = float(parts[17])
-            col19 = float(parts[19])
-            return frame_id, col10, col11, col16, col17, col19
+            bbox_center_x = float(parts[2])
+            return frame_id, col10, col11, col16, col17, bbox_center_x
         return None
 
     range1_data = []
@@ -198,8 +198,8 @@ def extract_columns_for_segment(txt_path, start, end):
             col11 = float(parts[11])
             col16 = float(parts[16])
             col17 = float(parts[17])
-            col19 = float(parts[19])
-            return frame_id, col10, col11, col16, col17, col19
+            bbox_center_x = float(parts[2])
+            return frame_id, col10, col11, col16, col17, bbox_center_x
         return None
 
     segment_data = []

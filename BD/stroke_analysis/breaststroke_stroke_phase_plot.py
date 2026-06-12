@@ -274,6 +274,7 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None, ou
             "values": col17s.tolist(), # Use Wrist Y for visualization
             "values_shoulder": col11s.tolist(),
             "values_wrist": col17s.tolist(),
+            "values_bbox_center": hip_xs.tolist(),
             "frames": frames.tolist(),
             "segment_metrics": metrics, # Pass calculated metrics
             "regions": {

@@ -28,6 +28,7 @@ class _AnalysisProgressScreenState extends State<AnalysisProgressScreen> with Ti
   String _statusMessage = '0%';
   String _currentStep = 'INITIALIZING...';
   bool _hasError = false;
+  bool _isNavigatingToResult = false;
 
   late AnimationController _frameController; 
   late AnimationController _smoothProgressController; 
@@ -144,6 +145,9 @@ class _AnalysisProgressScreenState extends State<AnalysisProgressScreen> with Ti
     try {
       final result = await _apiService.getResult(_activeVideoId!);
       if (mounted) {
+        setState(() {
+          _isNavigatingToResult = true;
+        });
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (context) => ResultScreen(result: result)),
         );
@@ -158,6 +162,10 @@ class _AnalysisProgressScreenState extends State<AnalysisProgressScreen> with Ti
     _timer?.cancel();
     _frameController.dispose();
     _smoothProgressController.dispose();
+    // 如果不是因為成功導航到結果頁面，且影片 ID 存在且沒有出錯（代表使用者手動按返回鍵），向後端發送取消訊號！
+    if (!_isNavigatingToResult && _activeVideoId != null && !_hasError) {
+      _apiService.cancelAnalysis(_activeVideoId!);
+    }
     super.dispose();
   }
 

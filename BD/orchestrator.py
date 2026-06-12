@@ -9,7 +9,7 @@ logging.basicConfig(
 )
 
 from BD.pose_estimator import run_pose_estimation
-from BD.txt_base import process_keypoints_txt
+from BD.freestyle_pose_estimator.txt_base import process_keypoints_txt
 from BD.diving_analyzer_track_angles import analyze_diving_phase
 from BD.stroke_style_recognizer import analyze_stroke
 
@@ -375,6 +375,40 @@ def run_full_analysis(
                  res_wrist = res.copy()
                  res_wrist["values"] = res["values_wrist"]
                  stroke_plot_figs[f"{key}_wrist"] = res_wrist
+
+                 # Extract bbox_center with expanded range including diving segment
+                 s_plot = None
+                 e_plot = None
+                 if laps_data and lap_idx > 0:
+                     matched_lap = next((l for l in laps_data if l.get('lap_index') == lap_idx), None)
+                     if matched_lap:
+                         swim_seg = matched_lap.get('swimming_segment')
+                         div_seg = matched_lap.get('diving_segment')
+                         if swim_seg and swim_seg[0] is not None:
+                             s_plot = swim_seg[0]
+                             if div_seg and div_seg[0] is not None:
+                                 s_plot = div_seg[0]
+                             e_plot = swim_seg[1]
+                 else:
+                     if "range1" in key or "decreasing" in key:
+                         s_plot = s1 if s1 is not None else e1
+                         e_plot = s2
+                     elif "range2" in key or "increasing" in key:
+                         s_plot = s2 if s2 is not None else e2
+                         e_plot = touch_frame
+                 
+                 if s_plot is not None and e_plot is not None:
+                     frames_full = []
+                     hip_x_full = []
+                     for f_id in range(s_plot, e_plot + 1):
+                         if f_id in parsed_data_map:
+                             frames_full.append(f_id)
+                             hip_x_full.append(parsed_data_map[f_id][7])
+                     
+                     res_bbox = res.copy()
+                     res_bbox["values"] = hip_x_full
+                     res_bbox["frames"] = frames_full
+                     stroke_plot_figs[f"{key}_bbox_center"] = res_bbox
             else:
                  stroke_plot_figs[key] = res
 
@@ -457,7 +491,7 @@ def run_full_analysis(
             
             # *** Plotting Steps for BFFS ***
             # Need to extract columns for ALL processed segments.
-            # `extract_columns_in_range` uses old logic. We should rely on `run_backstroke...` 
+                # `extract_columns_in_range` uses old logic. We should rely on `run_backstroke...` 
             # effectively having done this, but we need the raw data for plotting waveforms in orchestrator.
             # However! `run_backstroke_butterfly_analysis` calculated intersections but didn't return the raw column data 
             # in a way we can easily use here without re-extraction.
@@ -474,60 +508,91 @@ def run_full_analysis(
                     trend = lap.get('trend', 'unknown')
                     idx = lap.get('lap_index', 0)
                     swim_seg = lap.get('swimming_segment')
+                    div_seg = lap.get('diving_segment')
                     if swim_seg and swim_seg[0] is not None:
-                         s, e = swim_seg
+                         s_swim, e_swim = swim_seg
+                         s = s_swim
+                         if div_seg and div_seg[0] is not None:
+                             s = div_seg[0]  # Include diving segment start!
+                         e = e_swim
                          key = f"lap{idx}_{trend}"
                          
                          # Check if this key exists in results (it should)
                          if key in full_phase_regions:
-                             seg_data = extract_columns_for_segment(final_output_path, s, e)
-                             # regions is actually the full dict returned by plot_phase_on_col11_col17
+                             seg_data_full = extract_columns_for_segment(final_output_path, s, e)
+                             seg_data_swim = extract_columns_for_segment(final_output_path, s_swim, e_swim)
                              full_res_dict = full_phase_regions[key]
                              
                              # Extract keys needed
                              seg_metrics = full_res_dict.get("segment_metrics", [])
                              
-                             if seg_data:
-                                 frames = [d[0] for d in seg_data]
-                                 shoulder_y = [d[2] for d in seg_data]
-                                 wrist_y = [d[4] for d in seg_data]
+                             if seg_data_swim:
+                                 frames_swim = [d[0] for d in seg_data_swim]
+                                 shoulder_y = [d[2] for d in seg_data_swim]
+                                 wrist_y = [d[4] for d in seg_data_swim]
                                  
                                  stroke_plot_figs[f"{key}_shoulder"] = {
                                      "values": shoulder_y, 
-                                     "frames": frames,
-                                     "regions": full_res_dict, # Pass full dict safely
-                                     "segment_metrics": seg_metrics # <--- PASS METRICS HERE TOO
+                                     "frames": frames_swim,
+                                     "regions": full_res_dict, 
+                                     "segment_metrics": seg_metrics
                                  }
                                  stroke_plot_figs[f"{key}_wrist"] = {
                                      "values": wrist_y, 
-                                     "frames": frames,
+                                     "frames": frames_swim,
                                      "regions": full_res_dict,
-                                     "segment_metrics": seg_metrics # <--- PASS METRICS HERE
+                                     "segment_metrics": seg_metrics
+                                 }
+                             if seg_data_full:
+                                 frames_full = [d[0] for d in seg_data_full]
+                                 hip_x = [d[5] for d in seg_data_full]
+                                 stroke_plot_figs[f"{key}_bbox_center"] = {
+                                     "values": hip_x, 
+                                     "frames": frames_full,
+                                     "regions": full_res_dict,
+                                     "segment_metrics": seg_metrics
                                  }
             else:
                  # Fallback old logic if laps_data missing
-                 range1 = (e1, s2)
-                 range2 = (e2, analysis_end_frame)
-                 data_bbfs = extract_columns_in_range(final_output_path, range1, range2)
+                 s_fallback1 = s1 if s1 is not None else e1
+                 s_fallback2 = s2 if s2 is not None else e2
+                 range1_full = (s_fallback1, s2)
+                 range2_full = (s_fallback2, analysis_end_frame)
+                 range1_swim = (e1, s2)
+                 range2_swim = (e2, analysis_end_frame)
+                 
+                 data_bbfs_full = extract_columns_in_range(final_output_path, range1_full, range2_full)
+                 data_bbfs_swim = extract_columns_in_range(final_output_path, range1_swim, range2_swim)
+                 
                  for r_key in ["range1", "range2"]:
-                    dataset = data_bbfs.get(r_key, [])
+                    dataset_full = data_bbfs_full.get(r_key, [])
+                    dataset_swim = data_bbfs_swim.get(r_key, [])
                     regions = full_phase_regions.get(r_key, {})
                     seg_metrics = regions.get("segment_metrics", [])
                     
-                    if dataset:
-                        frames = [d[0] for d in dataset]
-                        shoulder_y = [d[2] for d in dataset]
-                        wrist_y = [d[4] for d in dataset]
+                    if dataset_swim:
+                        frames_swim = [d[0] for d in dataset_swim]
+                        shoulder_y = [d[2] for d in dataset_swim]
+                        wrist_y = [d[4] for d in dataset_swim]
                         
                         stroke_plot_figs[f"{r_key}_shoulder"] = {
                             "values": shoulder_y, 
-                            "frames": frames,
+                            "frames": frames_swim,
                             "regions": regions,
-                            "segment_metrics": seg_metrics # <--- PASS METRICS HERE TOO
+                            "segment_metrics": seg_metrics
                         }
                         stroke_plot_figs[f"{r_key}_wrist"] = {
                             "values": wrist_y, 
-                            "frames": frames,
+                            "frames": frames_swim,
+                            "regions": regions,
+                            "segment_metrics": seg_metrics
+                        }
+                    if dataset_full:
+                        frames_full = [d[0] for d in dataset_full]
+                        hip_x = [d[5] for d in dataset_full]
+                        stroke_plot_figs[f"{r_key}_bbox_center"] = {
+                            "values": hip_x, 
+                            "frames": frames_full,
                             "regions": regions,
                             "segment_metrics": seg_metrics
                         }

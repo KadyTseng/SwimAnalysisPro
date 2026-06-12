@@ -256,6 +256,7 @@ class FullAnalysisResult(BaseModel):
     # === 元資訊 ===
     timestamp: str  # ISO 8601 格式
     analysis_duration_seconds: Optional[float] = None  # 分析耗時
+    fps: Optional[float] = 30.0
 
     # === 擴展欄位 (未來可新增其他分析如：轉身分析、身體姿態評分等) ===
     advanced_metrics: Optional[Dict[str, Any]] = None  # {

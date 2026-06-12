@@ -200,8 +200,9 @@ import 'dart:convert';
 
 class RecordScreen extends StatefulWidget {
   final Function(int, {String? videoId, dynamic uploadFile})? onNavigate;
+  final bool isActive;
 
-  const RecordScreen({Key? key, this.onNavigate}) : super(key: key);
+  const RecordScreen({Key? key, this.onNavigate, this.isActive = true}) : super(key: key);
 
 
   @override
@@ -296,8 +297,19 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
               });
             } else if (requestId == 'get_record_status') {
             final responseData = d['responseData'] ?? {};
+            final bool isRecording = responseData['outputActive'] ?? false;
+            if (isRecording) {
+              _obsSocket!.sendString(jsonEncode({
+                'op': 6,
+                'd': {
+                  'requestType': 'StopRecord',
+                  'requestId': 'stop_record_on_init'
+                }
+              }));
+              print("OBS was recording on init/refresh. Stopped it to reset to idle state.");
+            }
             setState(() {
-              _obsRecording = responseData['outputActive'] ?? false;
+              _obsRecording = false;
             });
           }
         } else if (op == 5) { // Event
@@ -311,6 +323,11 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
               _obsRecording = isActive;
             });
             print('OBS Recording State Changed: $_obsRecording');
+
+            if (!widget.isActive) {
+              print('RecordScreen (Background): Sync _obsRecording state only.');
+              return;
+            }
 
             if (!isActive) {
                // Stop browser recording if it was started from OBS
@@ -540,8 +557,8 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
       final constraints = {
         'video': {
           'deviceId': camera.deviceId,
-          'width': {'ideal': 1280},
-          'height': {'ideal': 720},
+          'width': {'ideal': 3840},
+          'height': {'ideal': 1080},
         },
         'audio': false,
       };
@@ -555,7 +572,7 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
         ..muted = true
         ..style.width = '100%'
         ..style.height = '100%'
-        ..style.objectFit = 'cover';
+        ..style.objectFit = 'fill';
 
       // ignore: undefined_prefixed_name
       ui.platformViewRegistry.registerViewFactory(
@@ -630,12 +647,16 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
     }
 
     return Scaffold(
+      backgroundColor: Colors.white, // Pure white background to match split timer screen
       body: Stack(
         children: [
           /// Camera / ScreenShare 畫面
           if (_isInit && !_isAutoUploading)
             Center(
-              child: HtmlElementView(viewType: _viewType),
+              child: AspectRatio(
+                aspectRatio: 3840.0 / 1080.0,
+                child: HtmlElementView(viewType: _viewType),
+              ),
             )
           else if (!_isAutoUploading)
             const Center(child: CircularProgressIndicator()),
@@ -682,15 +703,15 @@ class _RecordScreenState extends State<RecordScreen> with AutomaticKeepAliveClie
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    (_cameras.isNotEmpty && (_cameras[_selectedCameraIndex].label ?? '').toLowerCase().contains('obs')) 
+                    _obsConnected 
                       ? 'OBS Ready' 
                       : 'OBS Disconnected', 
                     style: TextStyle(
-                      color: (_cameras.isNotEmpty && (_cameras[_selectedCameraIndex].label ?? '').toLowerCase().contains('obs')) ? Colors.white : Colors.redAccent, 
+                      color: _obsConnected ? Colors.white : Colors.redAccent, 
                       fontWeight: FontWeight.bold
                     )
                   ),
-                  if (_cameras.isNotEmpty && (_cameras[_selectedCameraIndex].label ?? '').toLowerCase().contains('obs')) ...[
+                  if (_obsConnected) ...[
                     const SizedBox(width: 16),
                     if (!_obsRecording)
                       ElevatedButton.icon(

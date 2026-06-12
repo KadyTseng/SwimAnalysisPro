@@ -46,14 +46,18 @@ from uuid import uuid4
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+import base64
+import cv2
+import numpy as np
 
 from api_schemas import (
     AnalysisUploadResponse,
     AnalysisStatusResponse,
     FullAnalysisResult,
     StrokeAnalysisResult,
+    SplitTimingResult,
     ListVideosResponse,
     VideoInfoSummary,
 )
@@ -65,6 +69,13 @@ except ImportError as e:
     logging.error(f"無法導入 BD.orchestrator: {e}")
     run_full_analysis = None
 
+try:
+    from BD.ws_detector import ScanningAreaDetector
+    from BD.swim_RGB import SwimmerDetector
+except ImportError as e:
+    logging.error(f"無法導入 BD.ws_detector / SwimmerDetector: {e}")
+    ScanningAreaDetector = None
+    SwimmerDetector = None
 
 # ===== 設置與日誌 =====
 logging.basicConfig(
@@ -112,6 +123,28 @@ app.mount("/data", StaticFiles(directory="data"), name="data")
 
 # ===== 狀態追蹤 (記憶體式，生產環境應改用 Redis/DB) =====
 analysis_db = {}
+
+@app.on_event("startup")
+async def load_persistent_analyses():
+    import json
+    from api_schemas import FullAnalysisResult
+    
+    # Load all persistent analysis JSON files in data/
+    for result_file in Path("data").glob("*_analysis_result.json"):
+        try:
+            with open(result_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            # Reconstruct Pydantic FullAnalysisResult
+            for video_id, info in data.items():
+                if info.get("result"):
+                    info["result"] = FullAnalysisResult(**info["result"])
+                analysis_db[video_id] = info
+                
+            logger.info(f"🎉 Pre-loaded persistent analysis from {result_file.name} for video ID: {list(data.keys())}")
+        except Exception as e:
+            logger.error(f"❌ Failed to load persistent analysis result {result_file.name}: {e}")
+
 # 結構: {
 #     "video_id": {
 #         "filename": str,
@@ -361,6 +394,10 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
         # 定義狀態回調函式
         def status_callback(progress_value: int, message: str = ""):
             if video_id in analysis_db:
+                if analysis_db[video_id].get("status") == "cancelled":
+                    logger.warning(f"[{video_id}] 偵測到使用者已取消/離開頁面，立刻主動中斷分析！")
+                    raise RuntimeError("Analysis cancelled by user")
+                
                 analysis_db[video_id]["progress"] = min(int(progress_value), 99)
                 if message:
                     analysis_db[video_id]["current_step"] = message
@@ -806,6 +843,7 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
             postprocessing_info=postprocessing_info,
             timestamp=datetime.now().isoformat(),
             analysis_duration_seconds=(datetime.now() - start_time).total_seconds(),
+            fps=results.get("fps", 30.0),
         )
 
         analysis_db[video_id]["result"] = full_result
@@ -819,10 +857,16 @@ async def run_analysis_task(video_id: str, video_path: str) -> None:
         )
 
     except Exception as e:
-        logger.error(f"[{video_id}] 分析失敗: {e}", exc_info=True)
-        analysis_db[video_id]["status"] = "failed"
-        analysis_db[video_id]["error_message"] = str(e)
-        analysis_db[video_id]["progress"] = 0
+        if "Analysis cancelled by user" in str(e):
+            logger.info(f"[{video_id}] 分析任務已被使用者取消中斷，已安全清理資源。")
+            analysis_db[video_id]["status"] = "cancelled"
+            analysis_db[video_id]["progress"] = 0
+            analysis_db[video_id]["current_step"] = "分析已被取消"
+        else:
+            logger.error(f"[{video_id}] 分析失敗: {e}", exc_info=True)
+            analysis_db[video_id]["status"] = "failed"
+            analysis_db[video_id]["error_message"] = str(e)
+            analysis_db[video_id]["progress"] = 0
 
 
 # ===== API Endpoints =====
@@ -857,6 +901,78 @@ async def root():
             "list": "/analysis/list (GET)",
         },
     }
+
+
+
+def convert_webm_to_mp4(input_path: str, output_path: str) -> bool:
+    import subprocess
+    try:
+        cmd = [
+            FFMPEG_EXECUTABLE_PATH,
+            "-y",
+            "-i", input_path,
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-c:a", "aac",
+            output_path
+        ]
+        logger.info(f"Starting WebM to MP4 background conversion: {' '.join(cmd)}")
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        logger.info(f"Conversion successful: {output_path}")
+        return True
+    except Exception as e:
+        logger.error(f"FFmpeg conversion failed: {e}")
+        return False
+
+async def run_conversion_and_update_db(video_id: str, webm_path: str, mp4_path: str):
+    try:
+        analysis_db[video_id]["status"] = "processing"
+        analysis_db[video_id]["current_step"] = "正在為 WebM 影片進行 MP4 H.264 格式轉碼..."
+        analysis_db[video_id]["progress"] = 30
+
+        success = await asyncio.to_thread(convert_webm_to_mp4, webm_path, mp4_path)
+
+        if success and Path(mp4_path).exists():
+            analysis_db[video_id]["status"] = "completed"
+            analysis_db[video_id]["progress"] = 100
+            analysis_db[video_id]["completed_at"] = datetime.now().isoformat()
+            analysis_db[video_id]["current_step"] = "轉碼完成，隨時可下載與播放！"
+            analysis_db[video_id]["file_path"] = mp4_path
+            analysis_db[video_id]["filename"] = Path(mp4_path).name
+
+            # 建立一個極簡的假分析結果，以讓結果頁面能載入播放
+            full_result = FullAnalysisResult(
+                video_id=video_id,
+                processed_video_path=mp4_path,
+                stroke_style="none",
+                stroke_result=StrokeAnalysisResult(
+                    total_count=0,
+                    stroke_style="none",
+                    strokes_per_minute=0.0
+                ),
+                split_timing=SplitTimingResult(
+                    splits=[],
+                    average_speed=0.0,
+                    metadata={"split_breakdown": "無分段資料（僅計時錄製）"}
+                ),
+                timestamp=datetime.now().isoformat(),
+                analysis_duration_seconds=0.1
+            )
+            analysis_db[video_id]["result"] = full_result
+            logger.info(f"[{video_id}] WebM 轉 MP4 H.264 成功！")
+
+            # 刪除原始 webm 檔以節省主機空間
+            try:
+                Path(webm_path).unlink()
+            except:
+                pass
+        else:
+            raise Exception("FFmpeg 轉檔回傳 False 或輸出檔案不存在")
+    except Exception as e:
+        logger.error(f"[{video_id}] 轉碼背景任務出錯: {e}")
+        analysis_db[video_id]["status"] = "failed"
+        analysis_db[video_id]["error_message"] = str(e)
 
 
 @app.post("/analysis/upload", response_model=AnalysisUploadResponse, status_code=202)
@@ -933,9 +1049,19 @@ async def upload_for_analysis(
             background_tasks.add_task(run_analysis_task, video_id, str(file_path))
             msg = "影片已接收，正在後台分析中..."
         else:
-            analysis_db[video_id]["status"] = "uploaded"
-            analysis_db[video_id]["current_step"] = "跳過自動分析"
-            msg = "影片已接收，不進行自動分析。"
+            if file_path.suffix.lower() == ".webm":
+                mp4_file_path = file_path.with_suffix(".mp4")
+                background_tasks.add_task(
+                    run_conversion_and_update_db,
+                    video_id,
+                    str(file_path),
+                    str(mp4_file_path)
+                )
+                msg = "影片已接收，正在背景轉碼為 MP4 以相容播放與下載。"
+            else:
+                analysis_db[video_id]["status"] = "uploaded"
+                analysis_db[video_id]["current_step"] = "跳過自動分析"
+                msg = "影片已接收，不進行自動分析。"
 
         logger.info(f"[{video_id}] 影片已上傳: {file.filename}")
 
@@ -953,6 +1079,25 @@ async def upload_for_analysis(
 
     finally:
         await file.close()
+
+
+@app.post("/analysis/{video_id}/cancel")
+async def cancel_analysis(video_id: str):
+    """
+    【功能 8】取消分析 - 中斷進行中的分析工作
+    """
+    if video_id in analysis_db:
+        # 如果分析已經完成了，就直接忽略取消請求，避免覆寫狀態！
+        if analysis_db[video_id].get("status") == "completed":
+            logger.info(f"[{video_id}] 忽略取消請求：分析已經成功完成。")
+            return {"message": "分析已完成，忽略取消請求。"}
+            
+        analysis_db[video_id]["status"] = "cancelled"
+        analysis_db[video_id]["progress"] = 0
+        analysis_db[video_id]["current_step"] = "使用者已取消分析"
+        logger.info(f"[{video_id}] 已標記為 cancelled，等待下一個 status_callback 中斷核心運算。")
+        return {"message": "取消請求已接收，正在停止背景分析。"}
+    raise HTTPException(status_code=404, detail="找不到指定的影片 ID")
 
 
 @app.get("/analysis/{video_id}/status", response_model=AnalysisStatusResponse)
@@ -1321,6 +1466,225 @@ async def health_check():
         "orchestrator_available": run_full_analysis is not None,
     }
 
+
+import time
+
+# ===== 測試：即時 WebSocket 傳送影像進行顏色偵測 =====
+@app.websocket("/analysis/realtime")
+async def websocket_realtime_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    if SwimmerDetector is None:
+        logging.error("SwimmerDetector is not available.")
+        await websocket.close()
+        return
+
+    # 初始化 SwimmerDetector (使用來自 swim_RGB.py 的進階雙 ROI + 狀態機偵測)
+    detector = SwimmerDetector(
+        threshold=6.0,     # 顏色偏差門檻
+        alpha=0.0,         # 主背景更新率
+        channel="green",   # 監控綠色通道
+        method="color"     # 使用顏色偏差法
+    )
+    detector.is_locked = False
+    detector.locked_combo = (0, 0, 0)
+    detector.formula_combinations = [
+        (b, g, r) for b in [0, 1] for g in [0, 1] for r in [0, 1]
+    ]
+    start_time = time.time()
+    frame_count = 0
+    bg_init_frames = []
+    bg_needed_frames = 60
+    bg_b, bg_g, bg_r = 0.0, 0.0, 0.0
+    is_bg_ready = False
+    cooldown_until_wall = 0.0
+    try:
+        while True:
+            # 接收來自前端的 base64 JPEG 或設定 JSON
+            data = await websocket.receive_text()
+            if data.startswith("{"):
+                try:
+                    import json
+                    config = json.loads(data)
+                    if config.get("action") == "update_config":
+                        if "threshold" in config:
+                            detector.threshold = float(config["threshold"])
+                        if "channel" in config:
+                            detector.channel = config["channel"]
+                        if "roi_x" in config:
+                            detector.roi_x = tuple(config["roi_x"])
+                        if "roi_y" in config:
+                            detector.roi_y = tuple(config["roi_y"])
+                        if "blue_var" in config:
+                            detector.blue_var = int(config["blue_var"])
+                        if "green_var" in config:
+                            detector.green_var = int(config["green_var"])
+                        if "red_var" in config:
+                            detector.red_var = int(config["red_var"])
+                        if "is_locked" in config:
+                            detector.is_locked = bool(config["is_locked"])
+                        if "locked_combo" in config:
+                            detector.locked_combo = tuple(config["locked_combo"])
+                        else:
+                            # 輔助防呆：若未直接傳 locked_combo，則用個別通道方向拼出 locked_combo
+                            detector.locked_combo = (
+                                getattr(detector, "blue_var", 0),
+                                getattr(detector, "green_var", 0),
+                                getattr(detector, "red_var", 0)
+                            )
+                        # 反向同步：將 locked_combo 的值同步回個別變數
+                        detector.blue_var = detector.locked_combo[0]
+                        detector.green_var = detector.locked_combo[1]
+                        detector.red_var = detector.locked_combo[2]
+                        logging.info(f"[實時偵測] 更新偵測參數: threshold={detector.threshold}, consecutive_frames=10, channel={detector.channel}, roi_x={detector.roi_x}, roi_y={detector.roi_y}, blue_var={getattr(detector, 'blue_var', 0)}, green_var={getattr(detector, 'green_var', 0)}, red_var={getattr(detector, 'red_var', 0)}, is_locked={getattr(detector, 'is_locked', False)}, locked_combo={getattr(detector, 'locked_combo', (0,0,0))}")
+                except Exception as ex:
+                    logging.error(f"解析設定 JSON 錯誤: {ex}")
+            elif data.startswith("data:image"):
+                header, encoded = data.split(",", 1)
+                img_bytes = base64.b64decode(encoded)
+                nparr = np.frombuffer(img_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                if frame is not None:
+                    frame_count += 1
+                    
+                    # 將前端傳來的任何影格尺寸（如 1280x360 寬螢幕）自動等比還原為原生的 3840x1080，
+                    # 從而讓 BD/swim_RGB.py 內部的硬編碼原生 ROI 座標 (3200:3300, 630:800 / 3600:3650, 580:750) 能夠無縫且精確地運作！
+                    h, w = frame.shape[:2]
+                    if w != 3840 or h != 1080:
+                        frame = cv2.resize(frame, (3840, 1080))
+                    
+                    # 呼叫進階偵測演算法進行狀態更新，自動處理 ROI 選擇、背景適應與去抖動
+                    res = detector.update(frame, fps=60.0)
+                    
+                    # 計算當下 ROI 的平均 BGR 和背景參考值 (比照 swim_split_timer_Dynamic.py)
+                    raw_b, raw_g, raw_r = 0.0, 0.0, 0.0
+                    ref_b, ref_g, ref_r = 0.0, 0.0, 0.0
+                    try:
+                        y1, y2 = detector.roi_y
+                        x1, x2 = detector.roi_x
+                        roi = frame[y1:y2, x1:x2]
+                        if roi.size > 0:
+                            avg_color = np.mean(roi, axis=(0, 1))
+                            raw_b = float(avg_color[0])
+                            raw_g = float(avg_color[1])
+                            raw_r = float(avg_color[2])
+                            
+                            # 前 60 幀背景初始化
+                            if not is_bg_ready:
+                                bg_init_frames.append(avg_color)
+                                current_avg = np.mean(bg_init_frames, axis=0)
+                                ref_b = float(current_avg[0])
+                                ref_g = float(current_avg[1])
+                                ref_r = float(current_avg[2])
+                                if len(bg_init_frames) == bg_needed_frames:
+                                    bg_b, bg_g, bg_r = ref_b, ref_g, ref_r
+                                    is_bg_ready = True
+                            else:
+                                ref_b, ref_g, ref_r = bg_b, bg_g, bg_r
+                            
+                            # 同步更新至 detector.bg_color 以確保後端狀態一致
+                            detector.bg_color = np.array([ref_b, ref_g, ref_r])
+                    except Exception as err:
+                        logging.error(f"計算 ROI BGR 錯誤: {err}")
+                    
+                    # 計算 fused score (比照 swim_split_timer_Dynamic.py 的動態尋優與鎖定邏輯)
+                    if not is_bg_ready:
+                        fused_score = 0.0
+                    else:
+                        is_locked = getattr(detector, "is_locked", False)
+                        if is_locked:
+                            # 鎖定模式下，直接使用鎖定的組合
+                            combo = getattr(detector, "locked_combo", (0, 0, 0))
+                            db = (raw_b - ref_b) if combo[0] == 0 else (ref_b - raw_b)
+                            dg = (raw_g - ref_g) if combo[1] == 0 else (ref_g - raw_g)
+                            dr = (raw_r - ref_r) if combo[2] == 0 else (ref_r - raw_r)
+                            fused_score = db + dg + dr
+                        else:
+                            # 未鎖定模式下，動態尋找 8 種組合中的最高正值 score
+                            max_positive_score = -99999.0
+                            current_best_combo = (0, 0, 0)
+                            combinations = getattr(detector, "formula_combinations", [(b, g, r) for b in [0, 1] for g in [0, 1] for r in [0, 1]])
+                            for combo in combinations:
+                                db = (raw_b - ref_b) if combo[0] == 0 else (ref_b - raw_b)
+                                dg = (raw_g - ref_g) if combo[1] == 0 else (ref_g - raw_g)
+                                dr = (raw_r - ref_r) if combo[2] == 0 else (ref_r - raw_r)
+                                total_score = db + dg + dr
+                                if total_score > max_positive_score:
+                                    max_positive_score = total_score
+                                    current_best_combo = combo
+                            fused_score = max_positive_score
+                            detector.locked_combo = current_best_combo  # 實時更新最佳組合以便隨時點擊鎖定
+                    
+                    score = fused_score
+                    
+                    # 覆寫觸發邏輯，如果背景尚未建立完畢，則不予觸發
+                    is_detected = (fused_score > detector.threshold) if is_bg_ready else False
+                    
+                    if not hasattr(detector, "fused_consecutive_detect"):
+                        detector.fused_consecutive_detect = 0
+                        detector.fused_consecutive_no_detect = 0
+                        detector.fused_is_swimmer_present = False
+                        
+                    if is_detected:
+                        detector.fused_consecutive_detect += 1
+                        detector.fused_consecutive_no_detect = 0
+                    else:
+                        detector.fused_consecutive_no_detect += 1
+                        detector.fused_consecutive_detect = 0
+                        
+                    triggered = False
+                    elapsed = time.time() - start_time
+                    in_cooldown = time.time() < cooldown_until_wall
+                    if elapsed >= 15.0:
+                        if not in_cooldown:
+                            if not detector.fused_is_swimmer_present and detector.fused_consecutive_detect >= 10:
+                                detector.fused_is_swimmer_present = True
+                                triggered = True
+                                cooldown_until_wall = time.time() + 4.0 # 4秒冷卻
+                            elif detector.fused_is_swimmer_present and detector.fused_consecutive_no_detect >= 5:
+                                detector.fused_is_swimmer_present = False
+                    else:
+                        detector.fused_is_swimmer_present = False
+                        detector.fused_consecutive_detect = 0
+                        detector.fused_consecutive_no_detect = 0
+                        cooldown_until_wall = 0.0
+                        triggered = False
+                    
+                    in_cooldown = time.time() < cooldown_until_wall
+                    
+                    # 當偵測到顯著變異（例如 Diff > 2.0）時，列印即時分析分數與狀態
+                    if score > 2.0:
+                        logging.info(f"[實時偵測] 影格: {frame_count} | 當前 Fused Diff: {score:.2f} | 門檻: {detector.threshold:.1f} | 連續影格: {detector.fused_consecutive_detect}/10 | 狀態: {'已越線' if triggered else '監控中'} | 冷卻中: {in_cooldown} | 鎖定公式: {getattr(detector, 'is_locked', False)} {getattr(detector, 'locked_combo', (0,0,0))}")
+                        
+                    await websocket.send_json({
+                        "event": "status",
+                        "score": float(score),
+                        "raw_r": raw_r,
+                        "raw_g": raw_g,
+                        "raw_b": raw_b,
+                        "ref_r": ref_r,
+                        "ref_g": ref_g,
+                        "ref_b": ref_b,
+                        "roi_x": list(detector.roi_x),
+                        "roi_y": list(detector.roi_y),
+                        "roi_shifted": False,
+                        "in_cooldown": bool(in_cooldown),
+                        "triggered": bool(triggered),
+                        "is_locked": bool(getattr(detector, "is_locked", False)),
+                        "locked_combo": list(getattr(detector, "locked_combo", (0, 0, 0)))
+                    })
+                    
+                    if triggered:
+                        logging.info(f"*** REALTIME TRIGGERED (Fused)! Score: {score:.4f} ***")
+                        await websocket.send_json({
+                            "event": "triggered",
+                            "score": float(score),
+                            "timestamp": time.time()
+                        })
+    except WebSocketDisconnect:
+        logging.info("WebSocket Client Disconnected")
+    except Exception as e:
+        logging.error(f"WebSocket Error: {e}")
 
 if __name__ == "__main__":
     import uvicorn

@@ -22,6 +22,13 @@ sleep 1
 echo "🚀 啟動後端 (18181)..."
 cd "$BASE_DIR"
 export LD_PRELOAD="/home/kady6582/.conda/envs/Pool/lib/libiomp5.so"
+
+# 限制 PyTorch 與 OpenCV 使用的 CPU 核心數量
+export OMP_NUM_THREADS=4
+export OPENBLAS_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export VECLIB_MAXIMUM_THREADS=4
+export NUMEXPR_NUM_THREADS=4
 nohup /home/kady6582/.conda/envs/Pool/bin/uvicorn main:app \
     --host 0.0.0.0 \
     --port 18181 \

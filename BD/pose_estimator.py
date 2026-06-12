@@ -74,6 +74,8 @@ def run_pose_estimation(
     ]
 
     frame_id = 0
+    last_center = None
+    no_detection_streak = 0
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -82,7 +84,61 @@ def run_pose_estimation(
         results = model(frame)
         result = results[0]
 
-        if result.keypoints is not None:
+        # --- Swimmer Centroid Tracking ---
+        best_idx = 0
+        detected = False
+        if result.boxes is not None and len(result.boxes) > 0:
+            box_xywh = (
+                result.boxes.xywh.cpu().numpy()
+                if torch.cuda.is_available()
+                else result.boxes.xywh.numpy()
+            )
+            box_confs = (
+                result.boxes.conf.cpu().numpy()
+                if torch.cuda.is_available()
+                else result.boxes.conf.numpy()
+            )
+            
+            # Filter boxes within pool bounds to exclude lifeguards/noise
+            valid_indices = []
+            for idx, box in enumerate(box_xywh):
+                x_c = box[0]
+                if 100 <= x_c <= 3600:
+                    valid_indices.append(idx)
+            
+            if not valid_indices:
+                # Fallback to all indices if none are within pool bounds
+                valid_indices = list(range(len(box_xywh)))
+                
+            if last_center is None:
+                # Select the highest confidence box among valid ones
+                best_idx = int(valid_indices[np.argmax([box_confs[i] for i in valid_indices])])
+                last_center = (box_xywh[best_idx][0], box_xywh[best_idx][1])
+                no_detection_streak = 0
+                detected = True
+            else:
+                # Match nearest box to last tracked center
+                dists = [np.linalg.norm(np.array([box_xywh[i][0], box_xywh[i][1]]) - np.array(last_center)) for i in valid_indices]
+                min_dist_idx = int(np.argmin(dists))
+                min_dist = dists[min_dist_idx]
+                
+                if min_dist < 500:
+                    best_idx = valid_indices[min_dist_idx]
+                    last_center = (box_xywh[best_idx][0], box_xywh[best_idx][1])
+                    no_detection_streak = 0
+                    detected = True
+                else:
+                    # Dist too far, treat as no detection
+                    no_detection_streak += 1
+                    if no_detection_streak >= 30:
+                        last_center = None # Reset tracking to self-heal
+        else:
+            no_detection_streak += 1
+            if no_detection_streak >= 30:
+                last_center = None
+
+
+        if result.keypoints is not None and detected:
 
             # 先取 keypoints（此時為 numpy）
             keypoints = (
@@ -94,20 +150,12 @@ def run_pose_estimation(
             # 先取 keypoints_conf（此時為 Tensor）
             keypoints_conf = result.keypoints.conf
 
-            # 如果有多個 BBOX，先挑最佳的 best_idx
-            if result.boxes is not None:
-                confs = (
-                    result.boxes.conf.cpu().numpy()
-                    if torch.cuda.is_available()
-                    else result.boxes.conf.numpy()
-                )
-
-                if len(confs) > 1:
-                    best_idx = np.argmax(confs)
-                    keypoints = keypoints[best_idx : best_idx + 1]
-                    keypoints_conf = keypoints_conf[
-                        best_idx : best_idx + 1
-                    ]  # <--還是 Tensor，不急著 numpy
+            # 如果有多個 BBOX，選擇我們所追蹤的 best_idx
+            if result.boxes is not None and len(result.boxes) > 0:
+                keypoints = keypoints[best_idx : best_idx + 1]
+                keypoints_conf = keypoints_conf[
+                    best_idx : best_idx + 1
+                ]  # <--還是 Tensor，不急著 numpy
 
             # 這裡才做 numpy 轉換（安全，不會出錯）
             if keypoints_conf is not None:
@@ -149,7 +197,7 @@ def run_pose_estimation(
             out.write(frame)
 
         if save_txt:
-            if result.boxes is None or len(result.boxes) == 0:
+            if result.boxes is None or len(result.boxes) == 0 or not detected:
                 f_txt.write(f"{frame_id} no detection\n")
             else:
 
@@ -186,8 +234,7 @@ def run_pose_estimation(
                         if torch.cuda.is_available()
                         else result.keypoints.conf.numpy()
                     )
-                if len(confs) > 1:
-                    best_idx = np.argmax(confs)
+                if len(confs) > 0:
                     xywh = xywh[best_idx : best_idx + 1]
                     confs = confs[best_idx : best_idx + 1]
                     classes = classes[best_idx : best_idx + 1]

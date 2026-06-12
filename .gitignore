@@ -18,3 +18,16 @@ uploaded_videos/
 test_outputs/
 *.log
 frontend/*.txt
+
+# 忽略 Python 快取檔
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 忽略圖片、音檔與暫存目錄
+*.png
+*.jpg
+*.jpeg
+*.wav
+scratch/

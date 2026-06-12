@@ -32,6 +32,7 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
 
     // Identify Chart Type
     final isKickAngle = widget.plotData.title.contains("Kick Angle") || widget.plotData.plotType == 'angle';
+    final isSpeedPlot = widget.plotData.title.contains("Speed") || widget.plotData.plotType == 'speed';
 
     // 0. Check Flip Condition (Metadata or Legacy Title check)
     bool isFlipped = false;
@@ -72,15 +73,14 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
     final List<VerticalRangeAnnotation> phaseRegions = [];
     final Set<String> presentPhases = {}; // Track present phases for legend
 
-    String? currentPhase;
-    double? startT; // Change from startX to startT (Time)
-
     // Map of Phase -> Color
     final Map<String, Color> phaseColors = {
       "Glide": Colors.grey.withOpacity(0.1),
       "Pull": Colors.blue.withOpacity(0.2),
       "Push": Colors.orange.withOpacity(0.2),
       "Recovery": Colors.green.withOpacity(0.2),
+      "Diving/Glide": Colors.purple.withOpacity(0.08),
+      "Stroke": Colors.transparent,
     };
 
     // Highlight Colors (more opaque/vivid)
@@ -91,63 +91,79 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
       "Glide": Colors.grey.withOpacity(0.4),
     };
 
-    for (var i = 0; i < widget.plotData.dataPoints.length; i++) {
-      final p = widget.plotData.dataPoints[i];
-      final t = p.timestampMs / 1000.0;
-      final x = getX(t);
-      spots.add(FlSpot(x, p.value));
+    if (isSpeedPlot) {
+      for (var i = 0; i < widget.plotData.dataPoints.length; i++) {
+        final p = widget.plotData.dataPoints[i];
+        final parts = (p.phase ?? '').split('|');
+        final double d = parts.isNotEmpty ? (double.tryParse(parts[0]) ?? 0.0) : 0.0;
+        
+        // Flipped (right to left): 0m is at the right edge, so X value is 25.0 - d
+        // Else (left to right): 25m is at the left edge, so X value is d
+        final double x = isFlipped ? (25.0 - d) : d;
+        spots.add(FlSpot(x, p.value));
+      }
+    } else {
+      String? currentPhase;
+      double? startT; // Change from startX to startT (Time)
 
-      // Region Detection
-      final phase = p.phase ?? "Glide";
-      presentPhases.add(phase);
+      for (var i = 0; i < widget.plotData.dataPoints.length; i++) {
+        final p = widget.plotData.dataPoints[i];
+        final t = p.timestampMs / 1000.0;
+        final x = getX(t);
+        spots.add(FlSpot(x, p.value));
 
-      if (phase != currentPhase) {
-        // Close previous region
-        if (currentPhase != null && startT != null) {
-          final endT = t;
-          final x1 = getX(startT);
-          final x2 = x; 
-          double sx = x1 < x2 ? x1 : x2;
-          double ex = x1 < x2 ? x2 : x1;
+        // Region Detection
+        final phase = p.phase ?? "Glide";
+        presentPhases.add(phase);
 
-          bool isHovered = false;
-          if (_hoverX != null && sx <= _hoverX! && ex >= _hoverX!) {
-            isHovered = true;
+        if (phase != currentPhase) {
+          // Close previous region
+          if (currentPhase != null && startT != null) {
+            final endT = t;
+            final x1 = getX(startT);
+            final x2 = x; 
+            double sx = x1 < x2 ? x1 : x2;
+            double ex = x1 < x2 ? x2 : x1;
+
+            bool isHovered = false;
+            if (_hoverX != null && sx <= _hoverX! && ex >= _hoverX!) {
+              isHovered = true;
+            }
+            
+            phaseRegions.add(VerticalRangeAnnotation(
+              x1: sx,
+              x2: ex,
+              color: isHovered 
+                  ? (highlightColors[currentPhase] ?? Colors.transparent) 
+                  : (phaseColors[currentPhase] ?? Colors.transparent),
+            ));
           }
-          
-          phaseRegions.add(VerticalRangeAnnotation(
+          // Start new region
+          currentPhase = phase;
+          startT = t;
+        }
+      }
+      // Close last region
+      if (currentPhase != null && startT != null) {
+         bool isHovered = false;
+         final lastT = widget.plotData.dataPoints.last.timestampMs / 1000.0;
+         final x1 = getX(startT);
+         final x2 = getX(lastT);
+         double sx = x1 < x2 ? x1 : x2;
+         double ex = x1 < x2 ? x2 : x1;
+
+         if (_hoverX != null && sx <= _hoverX! && ex >= _hoverX!) {
+           isHovered = true;
+         }
+
+         phaseRegions.add(VerticalRangeAnnotation(
             x1: sx,
             x2: ex,
             color: isHovered 
-                ? (highlightColors[currentPhase] ?? Colors.transparent) 
+                ? (highlightColors[currentPhase] ?? Colors.transparent)
                 : (phaseColors[currentPhase] ?? Colors.transparent),
-          ));
-        }
-        // Start new region
-        currentPhase = phase;
-        startT = t;
+         ));
       }
-    }
-    // Close last region
-    if (currentPhase != null && startT != null) {
-       bool isHovered = false;
-       final lastT = widget.plotData.dataPoints.last.timestampMs / 1000.0;
-       final x1 = getX(startT);
-       final x2 = getX(lastT);
-       double sx = x1 < x2 ? x1 : x2;
-       double ex = x1 < x2 ? x2 : x1;
-
-       if (_hoverX != null && sx <= _hoverX! && ex >= _hoverX!) {
-         isHovered = true;
-       }
-
-       phaseRegions.add(VerticalRangeAnnotation(
-          x1: sx,
-          x2: ex,
-          color: isHovered 
-              ? (highlightColors[currentPhase] ?? Colors.transparent)
-              : (phaseColors[currentPhase] ?? Colors.transparent),
-       ));
     }
 
     // 2. Extract Minima for Highlighting
@@ -158,24 +174,29 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
         widget.plotData.timeSeries!['metadata'] != null &&
         widget.plotData.timeSeries!['metadata']['minima'] != null) {
       
-      print("DEBUG-FRONTEND: Metadata Keys: ${widget.plotData.timeSeries!['metadata'].keys.toList()}");
-      print("DEBUG-FRONTEND: Full Metadata: ${widget.plotData.timeSeries!['metadata']}");
-      print("DEBUG-FRONTEND: Metadata Segment Metrics: ${widget.plotData.timeSeries!['metadata']['segment_metrics']}");
-
       final minimaList = widget.plotData.timeSeries!['metadata']['minima'] as List;
       for (var m in minimaList) {
          final mFrame = m['frame'];
          final index = widget.plotData.dataPoints.indexWhere((dp) => dp.frame == mFrame);
 
          if (index != -1) {
+           final dp = widget.plotData.dataPoints[index];
+           double x;
+           if (isSpeedPlot) {
+             final parts = (dp.phase ?? '').split('|');
+             final double d = parts.isNotEmpty ? (double.tryParse(parts[0]) ?? 0.0) : 0.0;
+             x = isFlipped ? (25.0 - d) : d;
+           } else {
+             x = getX(dp.timestampMs / 1000.0);
+           }
            minimaIndices.add(index);
-           minimaSpots.add(spots[index]); 
+           minimaSpots.add(FlSpot(x, dp.value)); 
          }
       }
     }
 
-    double minY = spots.map((e) => e.y).reduce((a, b) => a < b ? a : b);
-    double maxY = spots.map((e) => e.y).reduce((a, b) => a > b ? a : b);
+    double minY = spots.isEmpty ? 0.0 : spots.map((e) => e.y).reduce((a, b) => a < b ? a : b);
+    double maxY = spots.isEmpty ? 5.0 : spots.map((e) => e.y).reduce((a, b) => a > b ? a : b);
 
     // 3. Extract Segment Metrics (Top Labels)
     final List<FlSpot> metricSpots = [];
@@ -197,8 +218,15 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
            orElse: () => widget.plotData.dataPoints.last
          );
 
-         double t = dp.timestampMs / 1000.0;
-         double x = getX(t);
+         double x;
+         if (isSpeedPlot) {
+           final parts = (dp.phase ?? '').split('|');
+           final double d = parts.isNotEmpty ? (double.tryParse(parts[0]) ?? 0.0) : 0.0;
+           x = isFlipped ? (25.0 - d) : d;
+         } else {
+           double t = dp.timestampMs / 1000.0;
+           x = getX(t);
+         }
          
          metricSpots.add(FlSpot(x, maxY)); 
          metricLabels.add(label);
@@ -217,8 +245,18 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
     spots.sort((a, b) => a.x.compareTo(b.x));
 
     // Re-calculate X bounds based on spots (visual X)
-    double minX = spots.map((e) => e.x).reduce((a, b) => a < b ? a : b);
-    double maxX = spots.map((e) => e.x).reduce((a, b) => a > b ? a : b);
+    double minX = spots.isEmpty ? 0.0 : spots.map((e) => e.x).reduce((a, b) => a < b ? a : b);
+    double maxX = spots.isEmpty ? 10.0 : spots.map((e) => e.x).reduce((a, b) => a > b ? a : b);
+
+    if (isSpeedPlot) {
+      if (isFlipped) {
+        minX = 0.0;
+        maxX = 25.0;
+      } else {
+        minX = 25.0;
+        maxX = 50.0;
+      }
+    }
 
     // Build the Chart with ValueListenableBuilder for animation
     return ValueListenableBuilder<double>(
@@ -229,14 +267,21 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
         double normX = 0.0;
         
         if (currentTime < 0) {
-           // Not playing -> Show full Light (or Full Dark? Usually full light "Ghost")
-           // If we want "start as ghost", then Normal: stops=[0,0,0,1] (All Light)
-           // Flipped: stops=[0,1,1,1]? (All Light)
-           // Let's rely on data ranges.
-           if (isFlipped) normX = 1.0; // All Light (Left->Right: Light...Light|Dark) -> Wait, Flipped: Light->Dark. If normX=1, Left->Right is Light.
-           else normX = 0.0; // All Light (Left->Right: Dark|Light...Light). If normX=0, all Light.
+           if (isFlipped) normX = 1.0; 
+           else normX = 0.0; 
         } else {
-           double currentX = getX(currentTime);
+           double currentX;
+           if (isSpeedPlot) {
+             final currentTimeMs = currentTime * 1000.0;
+             final closestPoint = widget.plotData.dataPoints.reduce((a, b) =>
+                 (a.timestampMs - currentTimeMs).abs() < (b.timestampMs - currentTimeMs).abs() ? a : b);
+             final parts = (closestPoint.phase ?? '').split('|');
+             final double d = parts.isNotEmpty ? (double.tryParse(parts[0]) ?? 0.0) : 0.0;
+             currentX = isFlipped ? (25.0 - d) : d;
+           } else {
+             currentX = getX(currentTime);
+           }
+           
            // Clamp X to bounds
            if (currentX < minX) currentX = minX;
            if (currentX > maxX) currentX = maxX;
@@ -261,22 +306,16 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
         if (stop2 > 1) stop2 = 1;
 
         if (isFlipped) {
-           // Flipped (Time increases Right -> Left)
-           // Active Region (Past) is Right side (X > currentX, i.e., Normalized > normX)
-           // Gradient (Left -> Right): Future (Light) -> Past (Dark)
            gradientColors = [lightColor, lightColor, darkColor, darkColor];
            gradientStops = [0.0, stop1, stop2, 1.0];
         } else {
-           // Normal (Time increases Left -> Right)
-           // Active Region (Past) is Left side (X < currentX, i.e., Normalized < normX)
-           // Gradient (Left -> Right): Past (Dark) -> Future (Light)
            gradientColors = [darkColor, darkColor, lightColor, lightColor];
            gradientStops = [0.0, stop1, stop2, 1.0];
         }
 
         // Single Line with Gradient
         final barData = LineChartBarData(
-          spots: spots, // Always full spots, no jitter!
+          spots: spots, 
           isCurved: true,
           preventCurveOverShooting: true,
           gradient: LinearGradient(
@@ -322,33 +361,41 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
               children: [
                 // Legend
                 Row(
-                  children: isKickAngle
+                  children: isSpeedPlot
                       ? [
-                          // Kick Angle: Show "MIN ANGLE" with Red Dot
                           Padding(
                             padding: EdgeInsets.only(left: 8),
                             child: Row(children: [
-                               Container(
-                                 width: 10, height: 10, 
-                                 decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle)
-                               ),
-                               SizedBox(width: 4),
-                               Text("MIN ANGLE", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                              Container(width: 10, height: 10, color: Colors.blueAccent),
+                              SizedBox(width: 4),
+                              Text("速度 (Speed - m/s)", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                             ]),
                           )
                         ]
-                      : 
-                      // Stroke Chart: Show detected phases
-                      phaseColors.entries
-                          .where((e) => presentPhases.contains(e.key))
-                          .map((e) => Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Row(children: [
-                               Container(width: 10, height: 10, color: e.value.withOpacity(1.0)),
-                               SizedBox(width: 4),
-                               Text(e.key, style: TextStyle(fontSize: 10)),
-                            ]),
-                          )).toList(),
+                      : (isKickAngle
+                          ? [
+                              Padding(
+                                padding: EdgeInsets.only(left: 8),
+                                child: Row(children: [
+                                   Container(
+                                     width: 10, height: 10, 
+                                     decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle)
+                                   ),
+                                   SizedBox(width: 4),
+                                   Text("MIN ANGLE", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                                ]),
+                              )
+                            ]
+                          : phaseColors.entries
+                              .where((e) => presentPhases.contains(e.key) && e.key != "Stroke")
+                              .map((e) => Padding(
+                                padding: EdgeInsets.only(left: 8),
+                                child: Row(children: [
+                                   Container(width: 10, height: 10, color: e.value.withOpacity(1.0)),
+                                   SizedBox(width: 4),
+                                   Text(e.key, style: TextStyle(fontSize: 10)),
+                                ]),
+                              )).toList()),
                 )
               ],
             ),
@@ -376,10 +423,9 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                           if (touchResponse.lineBarSpots!.isNotEmpty) {
                             final x = touchResponse.lineBarSpots!.first.x;
                             
-                            // Check if hitting a Minima (Checking proximity to ANY minima spot)
                             bool hitMinima = false;
                             for (var mSpot in minimaSpots) {
-                              if ((mSpot.x - x).abs() < 0.1) { // Threshold: 0.1s
+                              if ((mSpot.x - x).abs() < 0.1) { 
                                  hitMinima = true;
                                  break;
                               }
@@ -390,7 +436,6 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                                _highlightAllMinima = hitMinima; 
                             });
                             
-                            // Handle Tap for Replay
                             if (event is FlTapUpEvent) {
                                for (var pr in phaseRegions) {
                                   if (x >= pr.x1 && x <= pr.x2) {
@@ -407,20 +452,19 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                         }
                       },
                       touchTooltipData: LineTouchTooltipData(
-                        tooltipBgColor: Colors.transparent, // Transparent for permanent labels
+                        tooltipBgColor: Colors.transparent, 
                         tooltipPadding: const EdgeInsets.all(0),
                         tooltipMargin: 8,
                         getTooltipItems: (touchedSpots) {
                           return touchedSpots.map((LineBarSpot touchedSpot) {
-                            // 1. Minima (Index 1)
                             if (touchedSpot.barIndex == 1) {
                                return LineTooltipItem(
                                  touchedSpot.y.toStringAsFixed(1),
                                  const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 12),
-                               );
+                                );
                             }
 
-                            if (touchedSpot.barIndex == 2) { // Metrics (Index 2)
+                            if (touchedSpot.barIndex == 2) { 
                                final index = touchedSpot.spotIndex;
                                if (index < metricLabels.length) {
                                  return LineTooltipItem(
@@ -431,26 +475,50 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                                return null;
                             }
 
-                            // 2. Main Waveform (Index 0)
                             if (touchedSpot.barIndex == 0) {
-                               final visualX = touchedSpot.x;
-                               final t = getTime(visualX);
-                               
-                               final p = widget.plotData.dataPoints.firstWhere(
-                                 (dp) => (dp.timestampMs / 1000.0 - t).abs() < 0.05, 
-                                 orElse: () => widget.plotData.dataPoints.first,
-                               );
+                               if (isSpeedPlot) {
+                                 final p = widget.plotData.dataPoints[touchedSpot.spotIndex];
+                                 final parts = (p.phase ?? '').split('|');
+                                 final double d = parts.isNotEmpty ? (double.tryParse(parts[0]) ?? 0.0) : 0.0;
+                                 final double relTime = parts.length > 1 ? (double.tryParse(parts[1]) ?? 0.0) : 0.0;
 
-                               return LineTooltipItem(
-                                 "${p.phase ?? 'Val'}\n",
-                                 const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.bold),
-                                 children: [
-                                   TextSpan(
-                                     text: "${touchedSpot.y.toStringAsFixed(1)}",
-                                     style: TextStyle(color: Colors.black, fontWeight: FontWeight.normal)
-                                   )
-                                 ]
-                               );
+                                 return LineTooltipItem(
+                                   "游泳速度 (Speed)\n",
+                                   const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.bold),
+                                   children: [
+                                     TextSpan(
+                                       text: "距離 (Distance): ${d.toStringAsFixed(1)} m\n",
+                                       style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.normal)
+                                     ),
+                                     TextSpan(
+                                       text: "速度 (Speed): ${touchedSpot.y.toStringAsFixed(2)} m/s\n",
+                                       style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)
+                                     ),
+                                     TextSpan(
+                                       text: "時間 (Time): ${relTime.toStringAsFixed(2)} s",
+                                       style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.normal)
+                                     )
+                                   ]
+                                 );
+                               } else {
+                                 final visualX = touchedSpot.x;
+                                 final t = getTime(visualX);
+                                 final p = widget.plotData.dataPoints.firstWhere(
+                                   (dp) => (dp.timestampMs / 1000.0 - t).abs() < 0.05, 
+                                   orElse: () => widget.plotData.dataPoints.first,
+                                 );
+
+                                 return LineTooltipItem(
+                                   "${p.phase ?? 'Val'}\n",
+                                   const TextStyle(color: Colors.blueGrey, fontWeight: FontWeight.bold),
+                                   children: [
+                                     TextSpan(
+                                       text: "${touchedSpot.y.toStringAsFixed(2)}",
+                                       style: const TextStyle(color: Colors.black, fontWeight: FontWeight.normal)
+                                     )
+                                   ]
+                                 );
+                               }
                             }
                             return null;
                           }).toList();
@@ -462,8 +530,8 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                         ...List.generate(minimaSpots.length, (index) {
                            return ShowingTooltipIndicators([
                              LineBarSpot(
-                               barData1, // Minima Bar
-                               1, // Index in list
+                               barData1, 
+                               1, 
                                minimaSpots[index]
                              ),
                            ]);
@@ -471,8 +539,8 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                       ...List.generate(metricSpots.length, (index) {
                          return ShowingTooltipIndicators([
                            LineBarSpot(
-                             barData2, // Metrics Bar
-                             2, // Index in list
+                             barData2, 
+                             2, 
                              metricSpots[index]
                            ),
                          ]);
@@ -488,8 +556,12 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                           interval: (maxX - minX) > 10 ? (maxX - minX) / 5 : 1,
                           getTitlesWidget: (value, meta) {
                             if (value < minX || value > maxX) return SizedBox.shrink();
+                            if (isSpeedPlot) {
+                              final double dist = isFlipped ? (25.0 - value) : value;
+                              return Text('${dist.toStringAsFixed(1)}m', style: const TextStyle(fontSize: 10));
+                            }
                             double t = getTime(value);
-                            return Text('${t.toStringAsFixed(1)}s', style: TextStyle(fontSize: 10));
+                            return Text('${t.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10));
                           },
                         ),
                       ),
@@ -511,9 +583,9 @@ class _AnalysisChartWidgetState extends State<AnalysisChartWidget> {
                     minY: minY,
                     maxY: maxY,
                     lineBarsData: [
-                      barData, // Index 0
-                      barData1, // Minima Index 1
-                      barData2, // Metrics Index 2
+                      barData, 
+                      barData1, 
+                      barData2, 
                     ],
                   ),
                 ),

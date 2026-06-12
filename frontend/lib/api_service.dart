@@ -58,10 +58,10 @@ class ApiService {
   }
 
   /// Uploads a Blob (for recordings)
-  Future<String?> uploadBlob(html.Blob blob, {bool skipAnalysis = false}) async {
+  Future<String?> uploadBlob(html.Blob blob, {bool skipAnalysis = false, String? customFilename}) async {
     final uri = Uri.parse('$baseUrl/analysis/upload');
     final formData = html.FormData();
-    final filename = 'record_${DateTime.now().millisecondsSinceEpoch}.webm';
+    final filename = customFilename ?? 'record_${DateTime.now().millisecondsSinceEpoch}.webm';
     formData.appendBlob('file', blob, filename);
     if (skipAnalysis) {
       formData.append('skip_analysis', 'true');
@@ -105,6 +105,33 @@ class ApiService {
     } else {
       print("[Frontend API] Check Status Failed: ${response.body}");
       throw Exception('Failed to check status');
+    }
+  }
+
+  /// Cancels an active analysis
+  Future<bool> cancelAnalysis(String videoId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/analysis/$videoId/cancel');
+      final response = await http.post(uri);
+      print("[Frontend API] Cancel Analysis for $videoId: Status ${response.statusCode}");
+      return response.statusCode == 200;
+    } catch (e) {
+      print("[Frontend API] Cancel Analysis Error: $e");
+      return false;
+    }
+  }
+
+  /// Fetches a list of all analyses from the backend
+  Future<ListVideosResponse> listAllAnalyses() async {
+    var uri = Uri.parse('$baseUrl/analysis/list');
+    var response = await http.get(uri);
+    print("[Frontend API] Fetching Analysis List... Code: ${response.statusCode}");
+    if (response.statusCode == 200) {
+      var json = jsonDecode(utf8.decode(response.bodyBytes));
+      return ListVideosResponse.fromJson(json);
+    } else {
+      print("[Frontend API] Get Analysis List Failed: ${response.body}");
+      throw Exception('Failed to get analysis list');
     }
   }
 

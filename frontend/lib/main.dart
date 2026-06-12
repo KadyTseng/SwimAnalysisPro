@@ -45,7 +45,9 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     // 這裡回歸原始分頁：0:錄影, 1:計時器, 2:上傳頁(Analysis & Playback)
     final List<Widget> _screens = [
-      RecordScreen(onNavigate: (index, {videoId, uploadFile}) {
+      RecordScreen(
+        isActive: _currentIndex == 0,
+        onNavigate: (index, {videoId, uploadFile}) {
         setState(() { _currentIndex = index; });
         if (uploadFile != null || videoId != null) {
           Navigator.of(context).push(
@@ -58,7 +60,9 @@ class _MainScreenState extends State<MainScreen> {
           );
         }
       }),
-      SplitTimerScreen(onNavigate: (index, {videoId, uploadFile}) {
+      SplitTimerScreen(
+        isActive: _currentIndex == 1,
+        onNavigate: (index, {videoId, uploadFile}) {
         setState(() { _currentIndex = index; });
         // NOTE: SplitTimerScreen handles upload internally and skips auto-analysis. 
         // It just needs to switch the tab to UploadScreen.

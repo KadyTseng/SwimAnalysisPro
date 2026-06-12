@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:math' as math;
 import '../models.dart';
 import '../api_service.dart';
 import 'chart_widget.dart';
@@ -110,6 +111,56 @@ class _ResultScreenState extends State<ResultScreen> {
     super.dispose();
   }
 
+  void _showMetricsDialog(BuildContext context, FullAnalysisResult result) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            width: math.max(MediaQuery.of(context).size.width * 0.8, 600.0),
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.analytics, color: Colors.blueAccent, size: 28),
+                        SizedBox(width: 8),
+                        Text(
+                          "分析指標數據 (Metrics Summary)",
+                          style: TextStyle(
+                            fontSize: 20, 
+                            fontWeight: FontWeight.bold, 
+                            color: Colors.blueGrey[900]
+                          ),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                    )
+                  ],
+                ),
+                Divider(height: 32),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: _buildHeaderMetrics(result),
+                ),
+                SizedBox(height: 16),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final result = widget.result;
@@ -117,11 +168,15 @@ class _ResultScreenState extends State<ResultScreen> {
     // Calculate aspect ratio dynamically or default to 16:9
     final double aspectRatio = _isVideoInitialized && _videoPlayerController != null && _videoPlayerController!.value.aspectRatio > 0
         ? _videoPlayerController!.value.aspectRatio
-        : 16 / 9;
+        : 3840 / 1080; // 32:9 widescreen default
+    
     final screenWidth = MediaQuery.of(context).size.width;
-    final videoHeight = screenWidth / aspectRatio;
+    
+    // Stretch to 100% of horizontal webpage width
+    double videoHeight = screenWidth / aspectRatio;
 
     return Scaffold(
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
@@ -131,7 +186,7 @@ class _ResultScreenState extends State<ResultScreen> {
                 children: [
                   // Custom Header (Not pinned, scrolls with content)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 16.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
                     child: Row(
                       children: [
                         IconButton(
@@ -141,13 +196,28 @@ class _ResultScreenState extends State<ResultScreen> {
                         Expanded(
                           child: Center(
                             child: Text(
-                              'Analysis Dashboard',
-                              style: Theme.of(context).textTheme.headlineSmall,
+                              'Swim Analysis Dashboard',
+                              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blueGrey[900]
+                              ),
                             ),
                           ),
                         ),
+                        // 1. Collapsible Metrics Toggle Button in Header
+                        TextButton.icon(
+                          onPressed: () => _showMetricsDialog(context, result),
+                          icon: Icon(Icons.analytics, color: Colors.blueAccent),
+                          label: Text("顯示分析指標", style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            backgroundColor: Colors.blue[50],
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                        SizedBox(width: 12),
                         IconButton(
-                          icon: Icon(Icons.download),
+                          icon: Icon(Icons.download, color: Colors.blueAccent),
                           onPressed: () => launchUrl(Uri.parse(_apiService.getDownloadUrl(result.videoId))),
                           tooltip: 'Download Video',
                         ),
@@ -155,19 +225,12 @@ class _ResultScreenState extends State<ResultScreen> {
                     ),
                   ),
 
-                  // 1. Metrics Section (Displayed TOP of video)
-                  Container(
-                    color: Colors.white,
-                    padding: const EdgeInsets.all(16.0),
-                    child: _buildHeaderMetrics(result),
-                  ),
-
                   Divider(height: 1),
                 ],
               ),
             ),
 
-            // 2. Video Player Section (Sticky)
+            // 2. Video Player Section (Sticky & Stretched to 100% width)
             SliverPersistentHeader(
               pinned: true,
               delegate: _StickyVideoDelegate(
@@ -175,7 +238,7 @@ class _ResultScreenState extends State<ResultScreen> {
                 minHeight: videoHeight, // Fixed size, doesn't shrink
                 child: Container(
                   width: double.infinity,
-                  color: Colors.black, // Still black inside if AspectRatio leaves tiny borders, but player expands fully
+                  color: Colors.white, // background color set to white
                   child: _isVideoInitialized
                       ? AspectRatio(
                           aspectRatio: _videoPlayerController!.value.aspectRatio,
@@ -238,7 +301,7 @@ class _ResultScreenState extends State<ResultScreen> {
                             ],
                           ),
                         )
-                      : Center(child: CircularProgressIndicator(color: Colors.white)),
+                      : Center(child: CircularProgressIndicator(color: Colors.blueAccent)),
                 ),
               ),
             ),
@@ -258,16 +321,308 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
+  InteractivePlot _generateSpeedPlot({
+    required int lapIndex,
+    required int startFrame,
+    required int endFrame,
+    required double avgSpeedVal,
+    required double fps,
+    required bool isDecreasing,
+    InteractivePlot? trackerPlot,
+  }) {
+    final List<TimeSeriesDataPoint> points = [];
+    final int totalFrames = endFrame - startFrame;
+    if (totalFrames <= 0) return InteractivePlot(plotType: "speed", dataPoints: [], title: "Lap $lapIndex Speed");
+
+    final double cruiseSpeed = avgSpeedVal > 0 ? avgSpeedVal : 1.5;
+
+    // 1. Populate raw distances and times for all frames in this lap
+    final List<double> distances = [];
+    final List<double> times = [];
+    for (int i = 0; i <= totalFrames; i++) {
+      final int f = startFrame + i;
+      times.add(i / fps);
+
+      double d = 0;
+      if (trackerPlot != null && trackerPlot.dataPoints.isNotEmpty) {
+        final closestPoint = trackerPlot.dataPoints.reduce((a, b) =>
+            (a.frame - f).abs() < (b.frame - f).abs() ? a : b);
+        final double X = closestPoint.value;
+        if (isDecreasing) {
+          d = (3840.0 - X) * 25.0 / 3840.0;
+        } else {
+          d = 25.0 + X * 25.0 / 3840.0;
+        }
+      } else {
+        if (isDecreasing) {
+          d = 25.0 * (i / totalFrames);
+        } else {
+          d = 25.0 + 25.0 * (i / totalFrames);
+        }
+      }
+      distances.add(d);
+    }
+
+    // 2. Enforce monotonic non-decreasing on distances
+    final List<double> monoDistances = List.from(distances);
+    double maxD = isDecreasing ? 0.0 : 25.0;
+    for (int i = 0; i < monoDistances.length; i++) {
+      double d = monoDistances[i];
+      if (isDecreasing) {
+        if (d < 0) d = 0;
+        if (d > 25.0) d = 25.0;
+        if (d <= maxD) {
+          d = maxD + 1e-5;
+        }
+        maxD = d;
+      } else {
+        if (d < 25.0) d = 25.0;
+        if (d > 50.0) d = 50.0;
+        if (d <= maxD) {
+          d = maxD + 1e-5;
+        }
+        maxD = d;
+      }
+      monoDistances[i] = d;
+    }
+
+    // 3. Compute raw speed (frame-by-frame derivative with diff window = 3 to reduce pixel jitter)
+    final List<double> rawSpeeds = List.filled(distances.length, cruiseSpeed);
+    const int diffWindow = 3;
+    for (int i = 0; i < monoDistances.length; i++) {
+      int leftIdx = (i - diffWindow ~/ 2).clamp(0, monoDistances.length - 1);
+      int rightIdx = (i + diffWindow ~/ 2).clamp(0, monoDistances.length - 1);
+      double distDiff = (monoDistances[rightIdx] - monoDistances[leftIdx]).abs();
+      double timeDiff = times[rightIdx] - times[leftIdx];
+      if (timeDiff > 0) {
+        rawSpeeds[i] = distDiff / timeDiff;
+      } else {
+        rawSpeeds[i] = cruiseSpeed;
+      }
+      
+      // Outlier filtering (-2.0 to 4.0 m/s)
+      if (rawSpeeds[i] < -2.0) rawSpeeds[i] = -2.0;
+      if (rawSpeeds[i] > 4.0) rawSpeeds[i] = 4.0;
+    }
+
+    // 4. Smooth speed values using a rolling mean with SMOOTH_WINDOW = 25
+    final List<double> smoothedSpeeds = List.filled(distances.length, cruiseSpeed);
+    const int smoothWindow = 25;
+    for (int i = 0; i < rawSpeeds.length; i++) {
+      double sum = 0;
+      int count = 0;
+      for (int w = -smoothWindow ~/ 2; w <= smoothWindow ~/ 2; w++) {
+        int idx = i + w;
+        if (idx >= 0 && idx < rawSpeeds.length) {
+          sum += rawSpeeds[idx];
+          count++;
+        }
+      }
+      smoothedSpeeds[i] = sum / count;
+    }
+
+    // 5. Populate TimeSeriesDataPoints
+    for (int i = 0; i <= totalFrames; i++) {
+      final int f = startFrame + i;
+      final double tMs = (f / fps) * 1000.0;
+      final double relativeTimeSec = i / fps;
+      final double finalSpeed = smoothedSpeeds[i];
+
+      points.add(TimeSeriesDataPoint(
+        frame: f,
+        timestampMs: tMs,
+        value: finalSpeed,
+        phase: "${monoDistances[i]}|$relativeTimeSec",
+      ));
+    }
+
+    return InteractivePlot(
+      plotType: "speed",
+      timeSeries: {
+        "metadata": {
+          "reverse_axis": isDecreasing,
+        }
+      },
+      dataPoints: points,
+      title: "Lap $lapIndex Speed",
+    );
+  }
+
   Widget _buildChartTabs(BuildContext context, FullAnalysisResult result) {
     List<_ChartTabItem> tabs = [];
 
-    // Helper to parse and add tabs
+    // 1. Gather all unique raw lap indices from stroke and diving plot keys
+    final Set<int> rawLapIndices = {};
+    void _collectLapIndices(Map<String, dynamic>? figs) {
+      if (figs == null) return;
+      for (var key in figs.keys) {
+        final match = RegExp(r"lap\s*(\d+)").firstMatch(key.toLowerCase());
+        if (match != null) {
+          rawLapIndices.add(int.parse(match.group(1)!));
+        }
+      }
+    }
+    _collectLapIndices(result.strokePlotFigs);
+    _collectLapIndices(result.divingPlotFigs);
+
+    // Sort original lap indices in ascending order
+    final sortedRawLapIndices = rawLapIndices.toList()..sort();
+
+    // Create a map from original lap index to sequential renumbered index (1, 2, 3...)
+    final Map<int, int> lapMapping = {};
+    for (int i = 0; i < sortedRawLapIndices.length; i++) {
+      lapMapping[sortedRawLapIndices[i]] = i + 1;
+    }
+
+    final double fps = result.fps;
+
+    // Try to parse split times
+    final breakdown = result.splitTiming?.metadata?['split_breakdown'];
+    double t0_15 = 8.5;
+    double t15_25 = 7.5;
+    double t25_50 = 15.0;
+
+    if (breakdown != null && breakdown is Map) {
+      if (breakdown.containsKey('0-15m')) {
+        t0_15 = double.tryParse(breakdown['0-15m'].toString().replaceAll('s', '')) ?? 8.5;
+      }
+      if (breakdown.containsKey('15-25m')) {
+        t15_25 = double.tryParse(breakdown['15-25m'].toString().replaceAll('s', '')) ?? 7.5;
+      }
+      if (breakdown.containsKey('25-50m')) {
+        t25_50 = double.tryParse(breakdown['25-50m'].toString().replaceAll('s', '')) ?? 15.0;
+      }
+    }
+
+    if (sortedRawLapIndices.isNotEmpty) {
+      for (var origIdx in sortedRawLapIndices) {
+        final int seqIdx = lapMapping[origIdx]!;
+        
+        // Find bbox_center plot first for precise speed calculation, then fallback to hip or shoulder plots
+        final bboxKey = result.strokePlotFigs?.keys.firstWhere(
+          (k) => k.toLowerCase().contains("lap$origIdx") && (k.toLowerCase().contains("bbox") || k.toLowerCase().contains("center")),
+          orElse: () => "",
+        ) ?? "";
+
+        final hipKey = result.strokePlotFigs?.keys.firstWhere(
+          (k) => k.toLowerCase().contains("lap$origIdx") && k.toLowerCase().contains("hip"),
+          orElse: () => "",
+        ) ?? "";
+        
+        final shoulderKey = result.strokePlotFigs?.keys.firstWhere(
+          (k) => k.toLowerCase().contains("lap$origIdx") && k.toLowerCase().contains("shoulder"),
+          orElse: () => "",
+        ) ?? "";
+
+        final trackerPlot = (bboxKey.isNotEmpty)
+            ? result.strokePlotFigs![bboxKey]
+            : ((hipKey.isNotEmpty) 
+                ? result.strokePlotFigs![hipKey] 
+                : ((shoulderKey.isNotEmpty) ? result.strokePlotFigs![shoulderKey] : null));
+
+        final matchingKey = bboxKey.isNotEmpty 
+            ? bboxKey 
+            : (hipKey.isNotEmpty 
+                ? hipKey 
+                : (shoulderKey.isNotEmpty ? shoulderKey : ""));
+
+        int startF = 0;
+        int endF = 1000;
+        bool isDecreasing = (seqIdx % 2 == 1); // Alternating directions as fallback
+
+        if (matchingKey.isNotEmpty) {
+          isDecreasing = matchingKey.toLowerCase().contains("decreasing") || matchingKey.toLowerCase().contains("range1");
+        }
+
+        final plotForRange = trackerPlot ?? (matchingKey.isNotEmpty ? result.strokePlotFigs![matchingKey] : null);
+        if (plotForRange != null && plotForRange.dataPoints.isNotEmpty) {
+          startF = plotForRange.dataPoints.map((dp) => dp.frame).reduce((a, b) => a < b ? a : b);
+          endF = plotForRange.dataPoints.map((dp) => dp.frame).reduce((a, b) => a > b ? a : b);
+        }
+
+        // Match average speed for this specific sequential lap
+        double avgSpeed = 1.5;
+        if (seqIdx == 1) {
+          avgSpeed = 25.0 / (t0_15 + t15_25);
+        } else if (seqIdx == 2) {
+          avgSpeed = 25.0 / t25_50;
+        } else {
+          avgSpeed = result.splitTiming?.averageSpeed ?? 1.5;
+        }
+
+        final speedPlot = _generateSpeedPlot(
+          lapIndex: seqIdx, 
+          startFrame: startF, 
+          endFrame: endF, 
+          avgSpeedVal: avgSpeed, 
+          fps: fps, 
+          isDecreasing: isDecreasing,
+          trackerPlot: trackerPlot,
+        );
+
+        tabs.add(_ChartTabItem(
+          originalKey: "lap${seqIdx}_speed",
+          plot: speedPlot,
+          realLapIndex: seqIdx,
+          subType: "Speed",
+          typeOrder: -1, // Prepend speed tabs at the very start of each lap
+          isKickAngle: false,
+        ));
+      }
+    } else {
+      // Fallback: if backend didn't provide laps_data, build them from duration
+      final totalDurationMs = _videoPlayerController?.value.duration.inMilliseconds ?? 30000;
+      final int totalFrames = totalDurationMs ~/ 33;
+      
+      // Lap 1 Outbound
+      final int midFrame = totalFrames ~/ 2;
+      final double avgSpeed1 = 25.0 / (t0_15 + t15_25);
+      final speedPlot1 = _generateSpeedPlot(
+        lapIndex: 1, 
+        startFrame: 0, 
+        endFrame: midFrame, 
+        avgSpeedVal: avgSpeed1, 
+        fps: fps, 
+        isDecreasing: true,
+      );
+      tabs.add(_ChartTabItem(
+        originalKey: "lap1_speed",
+        plot: speedPlot1,
+        realLapIndex: 1,
+        subType: "Speed",
+        typeOrder: -1,
+        isKickAngle: false,
+      ));
+
+      // Lap 2 Inbound
+      final double avgSpeed2 = 25.0 / t25_50;
+      final speedPlot2 = _generateSpeedPlot(
+        lapIndex: 2, 
+        startFrame: midFrame, 
+        endFrame: totalFrames, 
+        avgSpeedVal: avgSpeed2, 
+        fps: fps, 
+        isDecreasing: false,
+      );
+      tabs.add(_ChartTabItem(
+        originalKey: "lap2_speed",
+        plot: speedPlot2,
+        realLapIndex: 2,
+        subType: "Speed",
+        typeOrder: -1,
+        isKickAngle: false,
+      ));
+    }
+
+    // Helper to parse and add other plots
     void addTab(String key, InteractivePlot plot, bool isKickAngle) {
+      if (key.toLowerCase().contains("hip") || key.toLowerCase().contains("bbox") || key.toLowerCase().contains("center")) {
+        return; // Don't add raw coordinate tracker plots to UI tabs
+      }
       int lapIndex = 999;
       String typeStr = isKickAngle ? "Kick Angle" : "Unknown";
-      int typeOrder = 0; // 0: Kick, 1: Shoulder, 2: Wrist, 3: Other
+      int typeOrder = 0; 
 
-      // 1. Determine Type
       if (isKickAngle) {
         typeStr = "Kick Angle";
         typeOrder = 0;
@@ -279,19 +634,18 @@ class _ResultScreenState extends State<ResultScreen> {
           typeStr = "Wrist";
           typeOrder = 2;
         } else {
-          typeStr = "Info"; // Fallback
+          typeStr = "Info"; 
           typeOrder = 3;
         }
       }
 
-      // 2. Determine Lap Index
-      final lapMatch = RegExp(r"lap(\d+)").firstMatch(key);
+      final lapMatch = RegExp(r"lap(\d+)").firstMatch(key.toLowerCase());
       if (lapMatch != null) {
-        lapIndex = int.parse(lapMatch.group(1)!);
+        final originalLapIdx = int.parse(lapMatch.group(1)!);
+        lapIndex = lapMapping[originalLapIdx] ?? originalLapIdx;
       } else {
-        // Legacy support
-        if (key.contains("range1") || key.contains("decreasing")) lapIndex = -2; // Treat as first
-        else if (key.contains("range2") || key.contains("increasing")) lapIndex = -1; // Treat as second
+        if (key.contains("range1") || key.contains("decreasing")) lapIndex = 1;
+        else if (key.contains("range2") || key.contains("increasing")) lapIndex = 2;
       }
       
       tabs.add(_ChartTabItem(
@@ -316,28 +670,17 @@ class _ResultScreenState extends State<ResultScreen> {
 
     if (tabs.isEmpty) return SizedBox.shrink();
 
-    // 3. Normalize Lap Indices (Map sorted real indices to 1, 2, 3...)
-    final uniqueIndices = tabs.map((e) => e.realLapIndex).toSet().toList()..sort();
-    final Map<int, int> indexMap = {};
-    for (int i = 0; i < uniqueIndices.length; i++) {
-        indexMap[uniqueIndices[i]] = i + 1;
-    }
-
-    // 4. Update Labels & Sort
-    for (var tab in tabs) {
-      int displayIdx = indexMap[tab.realLapIndex]!;
-      tab.displayLabel = "Lap $displayIdx ${tab.subType}";
-    }
-
-    // Sort: Lap ASC -> TypeOrder ASC
+    // Sort: Lap ASC -> TypeOrder ASC (Speed has typeOrder = -1, so it always goes first!)
     tabs.sort((a, b) {
-      int cmp = indexMap[a.realLapIndex]!.compareTo(indexMap[b.realLapIndex]!);
+      int cmp = a.realLapIndex.compareTo(b.realLapIndex);
       if (cmp != 0) return cmp;
       return a.typeOrder.compareTo(b.typeOrder);
     });
 
-    // Debug
-    print("DEBUG: Generated Tabs: ${tabs.map((e) => e.displayLabel).toList()}");
+    // Generate Display Labels
+    for (var tab in tabs) {
+      tab.displayLabel = "Lap ${tab.realLapIndex} ${tab.subType}";
+    }
 
     return DefaultTabController(
       length: tabs.length,

@@ -220,6 +220,7 @@ class FullAnalysisResult {
   final SplitTimingResult? splitTiming;
   final String? focusCropVideoPath;
   final String timestamp;
+  final double fps;
   
   // Charts
   final Map<String, InteractivePlot>? strokePlotFigs;
@@ -234,6 +235,7 @@ class FullAnalysisResult {
     this.splitTiming,
     this.focusCropVideoPath,
     required this.timestamp,
+    this.fps = 30.0,
     this.strokePlotFigs,
     this.divingPlotFigs,
   });
@@ -262,8 +264,50 @@ class FullAnalysisResult {
           : null,
       focusCropVideoPath: json['focus_crop_video_path'],
       timestamp: json['timestamp'],
+      fps: (json['fps'] != null) ? (json['fps'] as num).toDouble() : 30.0,
       strokePlotFigs: parsePlots(json['stroke_plot_figs']),
       divingPlotFigs: parsePlots(json['diving_plot_figs']),
+    );
+  }
+}
+
+class VideoInfoSummary {
+  final String videoId;
+  final String filename;
+  final String status;
+  final String? createdAt;
+
+  VideoInfoSummary({
+    required this.videoId,
+    required this.filename,
+    required this.status,
+    this.createdAt,
+  });
+
+  factory VideoInfoSummary.fromJson(Map<String, dynamic> json) {
+    return VideoInfoSummary(
+      videoId: json['video_id'],
+      filename: json['filename'],
+      status: json['status'],
+      createdAt: json['created_at'],
+    );
+  }
+}
+
+class ListVideosResponse {
+  final int total;
+  final List<VideoInfoSummary> videos;
+
+  ListVideosResponse({
+    required this.total,
+    required this.videos,
+  });
+
+  factory ListVideosResponse.fromJson(Map<String, dynamic> json) {
+    var vList = json['videos'] as List? ?? [];
+    return ListVideosResponse(
+      total: json['total'] ?? 0,
+      videos: vList.map((x) => VideoInfoSummary.fromJson(x)).toList(),
     );
   }
 }
