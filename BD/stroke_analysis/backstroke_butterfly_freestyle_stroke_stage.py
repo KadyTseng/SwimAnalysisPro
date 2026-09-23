@@ -91,8 +91,17 @@ def extract_stroke_segments(txt_path, video_path, waterline_y):
     v_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     cap.release()
 
-    (s1, e1), (s2, e2) = find_submerged_segments(df, waterline_y)
+    segments = find_submerged_segments(df, waterline_y)
     touch_frame = find_touch_frame(df, v_width)
+
+    if len(segments) >= 2:
+        s1, e1 = segments[0]
+        s2, e2 = segments[1]
+    elif len(segments) == 1:
+        s1, e1 = segments[0]
+        s2, e2 = None, None
+    else:
+        e1, s2, e2 = None, None, None
 
     return e1, s2, e2, touch_frame, waterline_y
 
@@ -117,9 +126,9 @@ def extract_columns_in_range(txt_path, range1, range2):
             parsed = parse_line(line)
             if parsed:
                 frame_id, col10, col11, col16, col17, col19 = parsed
-                if range1[0] <= frame_id <= range1[1]:
+                if range1 and range1[0] is not None and range1[1] is not None and range1[0] <= frame_id <= range1[1]:
                     range1_data.append((frame_id, col10, col11, col16, col17, col19))
-                elif range2[0] <= frame_id <= range2[1]:
+                elif range2 and range2[0] is not None and range2[1] is not None and range2[0] <= frame_id <= range2[1]:
                     range2_data.append((frame_id, col10, col11, col16, col17, col19))
     return {"range1": range1_data, "range2": range2_data}
 
@@ -127,6 +136,9 @@ def extract_columns_in_range(txt_path, range1, range2):
 def plot_intersection_from_smoothed(data_dict, smooth_size=10):
     intersection_result = {}
     for key, values in data_dict.items():
+        if not values:
+            intersection_result[key] = []
+            continue
         frames = np.array([v[0] for v in values])
         col10s = np.array([v[1] for v in values])
         col16s = np.array([v[3] for v in values])
@@ -250,23 +262,24 @@ def run_backstroke_butterfly_analysis(
             txt_path, video_path, waterline_y
         )
     
-        if None in (e1, s2, e2):  # 這裡我們只需要檢查 e1, s2, e2 是否有效
-            print(f"⚠️ 區間資訊缺失，跳過影片: {video_path} (核心分段不足)")
-            return {"status": "skipped", "reason": "core segments missing"}
-    
-            # --- 修正點：定義分析終點 ---
+        # --- 修正點：定義分析終點 ---
         if touch_frame is None:
             # 如果沒有偵測到觸牆，獲取影片的總幀數作為分析終點
             cap = cv2.VideoCapture(video_path)
             last_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             cap.release()
             analysis_end_frame = last_frame - 5  # 使用影片最後5幀
+            if analysis_end_frame < 0: analysis_end_frame = 0
             print("偵測不到觸牆幀，使用影片最後一幀作為分析終點。")
         else:
             analysis_end_frame = touch_frame
+
+        e1_safe = e1 if e1 is not None else 0
+        s2_safe = s2 if s2 is not None else analysis_end_frame
+        e2_safe = e2 if e2 is not None else analysis_end_frame
     
-        range1 = (e1, s2)
-        range2 = (e2, analysis_end_frame)
+        range1 = (e1_safe, s2_safe)
+        range2 = (e2_safe, analysis_end_frame)
     
         # 擷取所需欄位數據
         # 舊 extract_columns_in_range 返回 {"range1": ..., "range2": ...}

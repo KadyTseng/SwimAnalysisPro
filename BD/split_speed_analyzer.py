@@ -26,16 +26,17 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
             df.columns = ["frame", "bbox_x", "bbox_w", "wrist_x"]
         else:
             logging.error(f"❌ TXT file format unexpected. Columns: {df.shape[1]}")
-            return {"15m": None, "25m": None, "50m": None}, None
+            return {"15m": None, "25m": None, "50m": None}, None, {}, {}
 
         # 過濾起始幀
-        df = df[df["frame"] >= start_frame].reset_index(drop=True)
+        if start_frame is not None:
+            df = df[df["frame"] >= start_frame].reset_index(drop=True)
 
         if df.empty:
             logging.warning(
                 f"❌ DataFrame is empty after filtering by start_frame {start_frame}."
             )
-            return {"15m": None, "25m": None, "50m": None}, None
+            return {"15m": None, "25m": None, "50m": None}, None, {}, {}
 
         logging.info(
             f"Data Loaded. Frames to process: {df['frame'].min()} to {df['frame'].max()}"
@@ -43,7 +44,7 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
 
     except Exception as e:
         logging.error(f"❌ Data loading or cleaning failed: {e}")
-        return {"15m": None, "25m": None, "50m": None}, None
+        return {"15m": None, "25m": None, "50m": None}, None, {}, {}
 
     passed = {"15m": None, "25m": None, "50m": None}
 

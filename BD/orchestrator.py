@@ -62,8 +62,8 @@ def transcode_to_h264(input_avi_path, output_mp4_path, ffmpeg_path):
         ]
 
         # 執行指令
-        # ... (後續的 subprocess.run 邏輯不變)
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        # 加上 timeout 防止 ffmpeg 由於未知原因永久卡死 (92% hang)
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=25)
 
         # 轉碼成功後，可以刪除中間的 AVI 檔案以節省空間
         if os.path.exists(output_mp4_path):
@@ -74,6 +74,9 @@ def transcode_to_h264(input_avi_path, output_mp4_path, ffmpeg_path):
             # 如果轉碼成功但沒有輸出檔案，可能是 FFMPEG 內部錯誤
             raise Exception("FFMPEG 轉碼成功但未生成檔案。")
 
+    except subprocess.TimeoutExpired as e:
+        logging.error(f"❌ FFMPEG 轉碼超時卡死！錯誤訊息: {e}")
+        return None
     except subprocess.CalledProcessError as e:
         logging.error(f"❌ FFMPEG 轉碼失敗！錯誤訊息: {e.stderr}")
         return None

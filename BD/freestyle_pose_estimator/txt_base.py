@@ -38,6 +38,9 @@ def process_keypoints_txt(
         if "no detection" not in line:
             num_columns = len(line.strip().split())
             break
+            
+    if num_columns is None:
+        num_columns = 28 # Default to 28 columns (7 bbox + 21 keypoints) if entirely empty
 
     data = []
 

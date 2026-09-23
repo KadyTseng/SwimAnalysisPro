@@ -95,6 +95,9 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
   bool _isRunning = false;
   bool _lastTriggerState = false;
 
+  double _shiftTime = 0.0;
+  bool _isShifting = false;
+
   // Browser-side recording
   html.MediaRecorder? _mediaRecorder;
   List<html.Blob> _recordedChunks = [];
@@ -677,7 +680,18 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
           if (!isAudioPlaying) {
             _playGunshot();
           }
-          _startObsRecording();
+
+          if (_shiftTime > 0.0) {
+            setState(() { _isShifting = true; });
+            Future.delayed(Duration(milliseconds: (_shiftTime * 1000).toInt()), () {
+              if (mounted) {
+                setState(() { _isShifting = false; });
+                _startObsRecording();
+              }
+            });
+          } else {
+            _startObsRecording();
+          }
         }
       });
     });
@@ -837,7 +851,7 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
 
     _stopwatchTimer?.cancel();
     _stopwatchTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-      if (!_isRunning) return;
+      if (!_isRunning || _isShifting) return;
 
       setState(() {
         final currentLap = _laps[_currentLapIndex];
@@ -850,7 +864,8 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
         }
 
         // 2. Handle remaining countdown
-        final remaining = const Duration(minutes: 2) - elapsed;
+        int shiftMs = (_shiftTime * 1000).toInt();
+        final remaining = const Duration(minutes: 2) - elapsed - Duration(milliseconds: shiftMs);
         if (remaining <= Duration.zero) {
           currentLap.remainingTime = Duration.zero;
           
@@ -868,31 +883,18 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
               _playGunshot();
             }
 
-            _currentLapIndex++;
-            _laps[_currentLapIndex].isRunning = true;
-            _lapStartTime = DateTime.now();
-            _lastWarningSecond = null;
-            _stopwatch.reset();
-            _stopwatch.start();
-            _lastTriggerState = false;
-            _startBrowserRecording();
-            _startStreaming();
-            _obsRecording = true; // Toggle button back to Stop Recording!
-
-            // CRITICAL FIX: Send StartRecord to OBS to start the next lap video recording!
-            if (_obsConnected && _obsSocket != null) {
-              try {
-                _obsSocket!.sendString(jsonEncode({
-                  'op': 6,
-                  'd': {
-                    'requestType': 'StartRecord',
-                    'requestId': 'start_record_req'
-                  }
-                }));
-                print("Sent StartRecord to OBS for Lap ${_currentLapIndex + 1}");
-              } catch (e) {
-                print('Error sending OBS start request for next lap: $e');
-              }
+            if (_shiftTime > 0.0) {
+              _isShifting = true;
+              Future.delayed(Duration(milliseconds: shiftMs), () {
+                if (mounted) {
+                  setState(() {
+                    _isShifting = false;
+                    _startNextLapSequence();
+                  });
+                }
+              });
+            } else {
+              _startNextLapSequence();
             }
           } else {
             // Completed all laps!
@@ -927,6 +929,35 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
     });
   }
 
+  void _startNextLapSequence() {
+    _currentLapIndex++;
+    _laps[_currentLapIndex].isRunning = true;
+    _lapStartTime = DateTime.now();
+    _lastWarningSecond = null;
+    _stopwatch.reset();
+    _stopwatch.start();
+    _lastTriggerState = false;
+    _startBrowserRecording();
+    _startStreaming();
+    _obsRecording = true; // Toggle button back to Stop Recording!
+
+    // Send StartRecord to OBS to start the next lap video recording!
+    if (_obsConnected && _obsSocket != null) {
+      try {
+        _obsSocket!.sendString(jsonEncode({
+          'op': 6,
+          'd': {
+            'requestType': 'StartRecord',
+            'requestId': 'start_record_req'
+          }
+        }));
+        print("Sent StartRecord to OBS for Lap ${_currentLapIndex + 1}");
+      } catch (e) {
+        print('Error sending OBS start request for next lap: $e');
+      }
+    }
+  }
+
   void _stopTiming() {
     _stopwatch.stop();
     _stopwatchTimer?.cancel();
@@ -938,6 +969,26 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
         lap.isRunning = false;
       }
     });
+  }
+
+  void _demoTouch() {
+    if (!_isRunning) return;
+    final currentLap = _laps[_currentLapIndex];
+    if (currentLap.isCompleted) return;
+    currentLap.splitTime = _stopwatch.elapsed;
+    currentLap.isCompleted = true;
+    if (_mediaRecorder != null && _mediaRecorder!.state == 'recording') {
+      _mediaRecorder!.stop();
+    }
+    if (_obsConnected && _obsSocket != null && _obsRecording) {
+      try {
+        _obsSocket!.sendString(jsonEncode({'op': 6, 'd': {'requestType': 'StopRecord', 'requestId': 'stop_record_req_lap'}}));
+        setState(() { _obsRecording = false; });
+      } catch (e) {
+        print('Error sending StopRecord from demo touch: $e');
+      }
+    }
+    _stopStreaming();
   }
 
   void _onSwimmerCrossed() {
@@ -1011,6 +1062,7 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
 
   void _showCalibrationDialog() {
     final TextEditingController threshCtrl = TextEditingController(text: _detectorThreshold.toStringAsFixed(1));
+    final TextEditingController shiftCtrl = TextEditingController(text: _shiftTime.toStringAsFixed(2));
 
     setState(() {
       _isCalibrationOpen = true;
@@ -1042,7 +1094,7 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
                               Icon(Icons.tune, color: Colors.tealAccent, size: 22),
                               SizedBox(width: 8),
                               Text(
-                                '校正畫面參數',
+                                '設定與校正參數',
                                 style: TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.bold,
@@ -1062,7 +1114,83 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
                       ),
                       const Divider(color: Colors.white24, height: 24),
                       
+                      // 0. Shift Time settings
+                      const Text(
+                        '【延遲秒數 (Shift Time)】',
+                        style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 18),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton(
+                            onPressed: () {
+                              setStateDialog(() {
+                                _shiftTime = (_shiftTime - 0.5).clamp(0.0, 10.0);
+                                shiftCtrl.text = _shiftTime.toStringAsFixed(2);
+                              });
+                              setState(() {
+                                _shiftTime = _shiftTime;
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[800],
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                            ),
+                            child: const Text('-0.5', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          ),
+                          const SizedBox(width: 16),
+                          SizedBox(
+                            width: 120,
+                            child: TextField(
+                              controller: shiftCtrl,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: const InputDecoration(
+                                contentPadding: EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                                enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                                focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.tealAccent)),
+                              ),
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 21),
+                              textAlign: TextAlign.center,
+                              onChanged: (val) {
+                                final double? doubleValue = double.tryParse(val);
+                                if (doubleValue != null) {
+                                  setStateDialog(() {
+                                    _shiftTime = doubleValue.clamp(0.0, 60.0);
+                                  });
+                                  setState(() {
+                                    _shiftTime = _shiftTime;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          ElevatedButton(
+                            onPressed: () {
+                              setStateDialog(() {
+                                _shiftTime = (_shiftTime + 0.5).clamp(0.0, 60.0);
+                                shiftCtrl.text = _shiftTime.toStringAsFixed(2);
+                              });
+                              setState(() {
+                                _shiftTime = _shiftTime;
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[800],
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                            ),
+                            child: const Text('+0.5', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          ),
+                        ],
+                      ),
+                      const Divider(color: Colors.white24, height: 24),
+                      
                       // 1. Threshold settings with manual text entry and -5 / +5 buttons
+
                       const Text(
                         '【偵測門檻值 (Threshold)】',
                         style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 18),
@@ -1990,7 +2118,7 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
             : '0');
 
     return Scaffold(
-      backgroundColor: Colors.white, // Pure white background
+      backgroundColor: Colors.white,
       body: Stack(
         children: [
 

@@ -59,10 +59,14 @@ def overlay_results_on_video(
     frame_id = 0
     active_labels = []
 
-    # --- 軌跡繪製初始化 ---
     df_hip_data = analysis_results.get("df_hip_trajectory", pd.DataFrame())
-    track_start_frame = analysis_results.get("track_segment_start", 0)
-    track_end_frame = analysis_results.get("track_segment_end", 0)
+    track_start_frame = analysis_results.get("track_segment_start")
+    if track_start_frame is None:
+        track_start_frame = -1
+        
+    track_end_frame = analysis_results.get("track_segment_end")
+    if track_end_frame is None:
+        track_end_frame = -1
 
     # 建立 Hip 座標查詢映射 (frame_id -> (x, y))
     frame_to_hip = {
@@ -85,7 +89,9 @@ def overlay_results_on_video(
     time_labels_all = []
     if split_times:
         passed = split_times.get("passed", {})
-        start_frame = split_times.get("start_frame", 0)
+        start_frame = split_times.get("start_frame")
+        if start_frame is None:
+            start_frame = 0
         line_positions = split_times.get("line_positions", {})
         BASE_Y_OFFSET = height - 150
 

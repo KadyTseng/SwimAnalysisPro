@@ -132,19 +132,48 @@ class _AnalysisProgressScreenState extends State<AnalysisProgressScreen> with Ti
       if (status.status == 'completed') {
         _timer?.cancel();
         _fetchResultAndNavigate();
-      } else if (status.status == 'failed') {
+      } else if (status.status == 'failed' || status.status == 'error') {
         _timer?.cancel();
         setState(() { _hasError = true; _currentStep = status.errorMessage ?? 'FAILED'; });
+        _showErrorDialog("影片無法分析", "非常抱歉，系統無法在此影片中偵測到清晰的游泳動作或骨架。請重錄影片後再試一次!");
       }
     } catch (e) {
-      print('[F12] Polling Error: $e');
+        print('[F12] Polling Error: $e');
     }
+  }
+
+  void _showErrorDialog(String title, String message) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: <Widget>[
+            TextButton(
+              child: const Text("確認"),
+              onPressed: () {
+                Navigator.of(dialogContext).pop(); // 關閉 Dialog
+                Navigator.of(context).pop(); // 回到上一個頁面
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _fetchResultAndNavigate() async {
     try {
       final result = await _apiService.getResult(_activeVideoId!);
       if (mounted) {
+        if (result.strokeResult.totalCount == 0) {
+          _showErrorDialog("影片無法分析", "非常抱歉，系統無法在此影片中偵測到清晰的游泳動作或骨架。請重錄影片後再試一次!");
+          return;
+        }
+
         setState(() {
           _isNavigatingToResult = true;
         });
