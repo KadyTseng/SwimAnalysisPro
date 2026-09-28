@@ -617,13 +617,37 @@ def run_full_analysis(
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     cap.release()
 
-    # Calibration definitions (assumed values)
-    d15m_x0 = width * 0.4
-    d25m_x0 = width * 0.05
-    d50m_x0 = width - 60
-    start_frame = s1  # Usually the start of the first dive segment
+    # 從校正模組取得真實的像素值
+    try:
+        from BD.calibration import get_pixel_for_distance
+        d15m_x0 = get_pixel_for_distance(15.0)
+        d25m_x0 = get_pixel_for_distance(25.0)
+        d50m_x0 = get_pixel_for_distance(50.0)
+        d0m_x0 = get_pixel_for_distance(0.0)
+    except Exception as e:
+        logging.warning(f"Could not load calibration, using fallback: {e}")
+        d15m_x0 = width * 0.4
+        d25m_x0 = width * 0.05
+        d50m_x0 = width - 60
+        d0m_x0 = width - 60
 
-    passed, total_time, split_breakdown, lap_durations = analyze_split_times(
+    # Refine start_frame: After dive starts, when bbox trailing edge (xmax) < d0m_x0
+    start_frame = s1
+    try:
+        import pandas as pd
+        df_txt = pd.read_csv(final_output_path, sep=r"\s+", header=None)
+        if df_txt.shape[1] > 4 and s1 is not None:
+            # 0: frame, 2: bbox_x, 4: bbox_w
+            sub_df = df_txt[df_txt[0] >= s1].copy()
+            sub_df["xmax"] = sub_df[2] + sub_df[4] / 2.0
+            leave_0m_df = sub_df[sub_df["xmax"] < d0m_x0]
+            if not leave_0m_df.empty:
+                start_frame = int(leave_0m_df.iloc[0][0])
+                logging.info(f"Refined start_frame from {s1} to {start_frame} (BBox trailing edge < {d0m_x0})")
+    except Exception as e:
+        logging.warning(f"Could not refine start frame: {e}")
+
+    passed, total_time, split_breakdown, lap_durations, start_frame = analyze_split_times(
         final_output_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, laps_data=laps_data
     )
     
@@ -646,8 +670,8 @@ def run_full_analysis(
         first_lap = valid_laps_for_timing[0]
         last_lap = valid_laps_for_timing[-1]
         
-        # Start Frame: Prefer diving start, else swimming start
-        lf_start = first_lap.get('diving_segment', [None])[0]
+        # Start Frame: Use the refined start_frame (leaving 0m), fallback to swimming start
+        lf_start = start_frame
         if lf_start is None: 
             lf_start = first_lap['swimming_segment'][0]
             

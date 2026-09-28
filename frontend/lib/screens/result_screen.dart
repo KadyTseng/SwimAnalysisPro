@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import '../models.dart';
 import '../api_service.dart';
 import 'chart_widget.dart';
+import 'wrist_trajectory_widget.dart';
 
 class ResultScreen extends StatefulWidget {
   final FullAnalysisResult result;
@@ -386,47 +387,65 @@ class _ResultScreenState extends State<ResultScreen> {
       monoDistances[i] = d;
     }
 
-    // 3. Compute raw speed (frame-by-frame derivative with diff window = 3 to reduce pixel jitter)
-    final List<double> rawSpeeds = List.filled(distances.length, cruiseSpeed);
-    const int diffWindow = 3;
+    // 3. New Speed Logic: 0-5m Average, beyond 5m Sliding Window (20 frames)
+    final List<double> finalSpeeds = List.filled(distances.length, cruiseSpeed);
+    final double startDistance = monoDistances.isNotEmpty ? monoDistances[0] : (isDecreasing ? 0.0 : 25.0);
+    
+    // Find index for 5m mark
+    int idx5m = -1;
     for (int i = 0; i < monoDistances.length; i++) {
-      int leftIdx = (i - diffWindow ~/ 2).clamp(0, monoDistances.length - 1);
-      int rightIdx = (i + diffWindow ~/ 2).clamp(0, monoDistances.length - 1);
-      double distDiff = (monoDistances[rightIdx] - monoDistances[leftIdx]).abs();
-      double timeDiff = times[rightIdx] - times[leftIdx];
-      if (timeDiff > 0) {
-        rawSpeeds[i] = distDiff / timeDiff;
+      if ((monoDistances[i] - startDistance).abs() >= 5.0) {
+        idx5m = i;
+        break;
+      }
+    }
+    
+    // Calculate average speed for first 5m
+    double vAvg5m = cruiseSpeed;
+    if (idx5m > 0 && times[idx5m] - times[0] > 0) {
+      vAvg5m = 5.0 / (times[idx5m] - times[0]);
+    } else if (idx5m == -1 && monoDistances.isNotEmpty) {
+      // Never reached 5m, use average over whatever distance was covered
+      double finalDist = (monoDistances.last - startDistance).abs();
+      double finalTime = times.last - times[0];
+      if (finalTime > 0) vAvg5m = finalDist / finalTime;
+    }
+    
+    // Populate speeds
+    for (int i = 0; i < monoDistances.length; i++) {
+      double currentDistFromStart = (monoDistances[i] - startDistance).abs();
+      
+      if (currentDistFromStart <= 5.0) {
+        // 0-5m phase: Use constant average speed
+        finalSpeeds[i] = vAvg5m;
       } else {
-        rawSpeeds[i] = cruiseSpeed;
+        // Beyond 5m phase: 20-frame sliding window
+        int windowStart = i - 20;
+        if (windowStart < 0) {
+           windowStart = 0; 
+        }
+        
+        double distDiff = (monoDistances[i] - monoDistances[windowStart]).abs();
+        double timeDiff = times[i] - times[windowStart];
+        
+        if (timeDiff > 0) {
+          finalSpeeds[i] = distDiff / timeDiff;
+        } else {
+          finalSpeeds[i] = cruiseSpeed;
+        }
       }
       
       // Outlier filtering (-2.0 to 4.0 m/s)
-      if (rawSpeeds[i] < -2.0) rawSpeeds[i] = -2.0;
-      if (rawSpeeds[i] > 4.0) rawSpeeds[i] = 4.0;
+      if (finalSpeeds[i] < -2.0) finalSpeeds[i] = -2.0;
+      if (finalSpeeds[i] > 4.0) finalSpeeds[i] = 4.0;
     }
 
-    // 4. Smooth speed values using a rolling mean with SMOOTH_WINDOW = 25
-    final List<double> smoothedSpeeds = List.filled(distances.length, cruiseSpeed);
-    const int smoothWindow = 25;
-    for (int i = 0; i < rawSpeeds.length; i++) {
-      double sum = 0;
-      int count = 0;
-      for (int w = -smoothWindow ~/ 2; w <= smoothWindow ~/ 2; w++) {
-        int idx = i + w;
-        if (idx >= 0 && idx < rawSpeeds.length) {
-          sum += rawSpeeds[idx];
-          count++;
-        }
-      }
-      smoothedSpeeds[i] = sum / count;
-    }
-
-    // 5. Populate TimeSeriesDataPoints
+    // 4. Populate TimeSeriesDataPoints
     for (int i = 0; i <= totalFrames; i++) {
       final int f = startFrame + i;
       final double tMs = (f / fps) * 1000.0;
       final double relativeTimeSec = i / fps;
-      final double finalSpeed = smoothedSpeeds[i];
+      final double finalSpeed = finalSpeeds[i];
 
       points.add(TimeSeriesDataPoint(
         frame: f,
@@ -630,12 +649,15 @@ class _ResultScreenState extends State<ResultScreen> {
         if (key.toLowerCase().contains("shoulder")) {
           typeStr = "Shoulder";
           typeOrder = 1;
+        } else if (key.toLowerCase().contains("trajectory")) {
+          typeStr = "Wrist Trajectory";
+          typeOrder = 3;
         } else if (key.toLowerCase().contains("wrist")) {
           typeStr = "Wrist";
           typeOrder = 2;
         } else {
           typeStr = "Info"; 
-          typeOrder = 3;
+          typeOrder = 4;
         }
       }
 
@@ -697,10 +719,17 @@ class _ResultScreenState extends State<ResultScreen> {
             ),
           ),
           Container(
-            height: 350,
+            height: 480, // Expanded height for 2D trajectory & waveform readability
             padding: EdgeInsets.all(16),
             child: TabBarView(
               children: tabs.map((t) {
+                if (t.subType == "Wrist Trajectory" || t.plot.plotType == "trajectory") {
+                  return WristTrajectoryWidget(
+                    plotData: t.plot,
+                    currentTimeNotifier: _currentTimeNotifier,
+                    onPhaseTap: (start, end) => _handlePhaseReplay(start, end),
+                  );
+                }
                 return AnalysisChartWidget(
                   plotData: t.plot, 
                   lineColor: t.isKickAngle ? Colors.orangeAccent : Colors.blueAccent,

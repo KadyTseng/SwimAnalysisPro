@@ -101,9 +101,11 @@ def split_segments(video_path, keypoints_txt_path, laps_data=None):
                 df_swimming_list.append(s_part)
     else:
         # Fallback: 使用舊邏輯 (只取第一趟)
-        # 建立精簡版 df
-        df_clean = df_full[["frame_id", "col2", "col3", "col5", "col8", "col19", "col20"]].copy()
-        df_clean.columns = ["frame_id", "bbox_x", "bbox_y", "height", "col8", "hip_x", "hip_y"]
+        # 建立精簡版 df (需包含所有關節的 Y 座標以供潛泳判斷)
+        df_clean = df_full[["frame_id", "col2", "col3", "col5", "col8", "col19", "col20", 
+                            "col11", "col14", "col17", "col23", "col26"]].copy()
+        df_clean.columns = ["frame_id", "bbox_x", "bbox_y", "height", "col8", "hip_x", "hip_y",
+                            "shoulder_y", "elbow_y", "wrist_y", "knee_y", "ankle_y"]
 
         waterline_y, segments = get_diving_swimming_segments(video_path, df_clean)
         

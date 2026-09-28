@@ -100,11 +100,18 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None, ou
             if first_prop_start > frames[0]:
                 glide_regions.insert(0, (frames[0], first_prop_start))
 
-        # --- 補最後段 glide ---
+        # --- 補齊後段 glide ---
         if recovery_ends:
             last_recovery_end = recovery_ends[-1]
             if last_recovery_end < frames[-1]:
                 glide_regions.append((last_recovery_end, frames[-1]))
+                
+        def apply_offset(regions, offset=7):
+            return [(s - offset, e - offset) for s, e in regions]
+            
+        propulsion_regions = apply_offset(propulsion_regions)
+        recovery_regions = apply_offset(recovery_regions)
+        glide_regions = apply_offset(glide_regions)
 
         results[key] = {
             "propulsion": propulsion_regions,
@@ -171,8 +178,8 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None, ou
 
             for i, f in enumerate(stage_starts):
                 if f in frame_to_hip_x:
-                    delta_x = frame_to_hip_x[f] - hip_start
-                    disp_m = abs(delta_x * (25 / 3840))
+                    from BD.calibration import get_distance_between_pixels
+                    disp_m = get_distance_between_pixels(frame_to_hip_x[f], hip_start)
                     duration = (f - stage_starts[i - 1]) / 30 if i > 0 else 0.0
                     label_text = f"{disp_m:.2f}m, {duration:.2f}s"
                     y_val = np.interp(f, frames, y_values)
@@ -196,8 +203,8 @@ def plot_phase_on_col11_col17(data_dict, phase_frames_dict, waterline_y=None, ou
                 start_f = stage_starts[i - 1]
                 end_f = stage_starts[i]
                 if start_f in frame_to_hip_x and end_f in frame_to_hip_x:
-                    delta_x = frame_to_hip_x[end_f] - frame_to_hip_x[start_f]
-                    segment_disp = abs(delta_x * (25 / 3840))
+                    from BD.calibration import get_distance_between_pixels
+                    segment_disp = get_distance_between_pixels(frame_to_hip_x[end_f], frame_to_hip_x[start_f])
                     label = f"{segment_disp:.2f}m"
                     center_f = (start_f + end_f) / 2 # Float for precision
                     

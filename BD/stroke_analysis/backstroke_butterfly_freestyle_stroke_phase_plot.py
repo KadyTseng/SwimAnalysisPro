@@ -38,7 +38,9 @@ def plot_phase_on_col11_col17(
         col17s = np.array([v[4] for v in values])
         hip_xs = np.array([float(v[5]) for v in values])  # 人位移
         hip_start = hip_xs[0]
-        distances = (hip_xs - hip_start) * (25 / 3840)
+        
+        from BD.calibration import get_distance_for_pixel
+        distances = np.abs(get_distance_for_pixel(hip_xs) - get_distance_for_pixel(hip_start))
 
         col10s_smooth = uniform_filter1d(col10s, size=10)
         col16s_smooth = uniform_filter1d(col16s, size=10)
@@ -164,10 +166,17 @@ def plot_phase_on_col11_col17(
             else:
                 recovery_regions_new.append((s, e))
 
-        # 更新原本的區間
+        # 更新原本的陣列
         pull_regions = pull_regions_new
         push_regions = push_regions_new
         recovery_regions = recovery_regions_new
+
+        def apply_offset(regions, offset=7):
+            return [(s - offset, e - offset) for s, e in regions]
+            
+        pull_regions = apply_offset(pull_regions)
+        push_regions = apply_offset(push_regions)
+        recovery_regions = apply_offset(recovery_regions)
 
         # === 組合輸出文字 ===
         output_text = f"\n{key} Phase Frames:\n"
@@ -207,13 +216,9 @@ def plot_phase_on_col11_col17(
 
             for i, f in enumerate(stage_starts):
                 if f in frame_to_hip_x:
-                    delta_x = frame_to_hip_x[f] - hip_start
-                    disp_m = abs(delta_x * (25 / 3840))
-                    if i > 0:
-                        prev_f = stage_starts[i - 1]
-                        duration = (f - prev_f) / 30
-                    else:
-                        duration = 0.0
+                    from BD.calibration import get_distance_between_pixels
+                    disp_m = get_distance_between_pixels(frame_to_hip_x[f], hip_start)
+                    duration = (f - stage_starts[i - 1]) / 30 if i > 0 else 0.0
                     label_text = f"{disp_m:.2f}m, {duration:.2f}s"
                     y_pos = np.interp(f, frames, y_values)
                     ax1.annotate(
@@ -237,8 +242,8 @@ def plot_phase_on_col11_col17(
                 start_f = stage_starts[i - 1]
                 end_f = stage_starts[i]
                 if start_f in frame_to_hip_x and end_f in frame_to_hip_x:
-                    delta_x = frame_to_hip_x[end_f] - frame_to_hip_x[start_f]
-                    segment_disp = abs(delta_x * (25 / 3840))
+                    from BD.calibration import get_distance_between_pixels
+                    segment_disp = get_distance_between_pixels(frame_to_hip_x[end_f], frame_to_hip_x[start_f])
                     label = f"{segment_disp:.2f}m"
                     center_f = (start_f + end_f) / 2 # Float for precision
                     tick_positions.append((start_f + end_f) // 2)
@@ -347,9 +352,9 @@ def plot_phase_on_col11_col17(
         try:
              with open(output_txt, "w", encoding="utf-8") as f:
                  json.dump(save_data, f, indent=4, cls=NumpyEncoder)
-             print(f"✅ Phase analysis JSON saved to {output_txt}")
+             print(f"[OK] Phase analysis JSON saved to {output_txt}")
         except Exception as e:
-             print(f"❌ Failed to save phase JSON: {e}")
+             print(f"[ERROR] Failed to save phase JSON: {e}")
 
     return full_results
 

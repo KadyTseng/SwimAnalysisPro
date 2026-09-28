@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../api_service.dart';
 import 'dart:html' as html;
 import 'dart:ui' as ui;
+import 'dart:ui_web' as ui_web;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -1517,7 +1518,7 @@ class _SplitTimerScreenState extends State<SplitTimerScreen> with AutomaticKeepA
       });
 
       // ignore: undefined_prefixed_name
-      ui.platformViewRegistry.registerViewFactory(
+      ui_web.platformViewRegistry.registerViewFactory(
         _viewType,
         (int viewId) => _videoElement!,
       );

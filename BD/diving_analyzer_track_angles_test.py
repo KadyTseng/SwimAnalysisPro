@@ -137,7 +137,20 @@ def detect_laps_by_hip_x(df, min_lap_duration=100):
     turning_points = sorted(np.concatenate([id_max, id_min]).astype(int))
     
     # 加入起點 (0) 和 終點 (len-1)
-    boundary_points = [0, len(df)-1]
+    # 引入校正模組
+    from BD.calibration import get_distance_between_pixels
+
+    for i in range(1, len(sorted_min_frames)):
+        start_f = int(sorted_min_frames[i-1])
+        end_f = int(sorted_min_frames[i])
+        
+        if start_f in frame_to_hip_x and end_f in frame_to_hip_x:
+            start_x = frame_to_hip_x[start_f]
+            end_x = frame_to_hip_x[end_f]
+            
+            dist_m = get_distance_between_pixels(start_x, end_x)
+            
+            label = f"{dist_m:.2f}m" # 避免與上一點太近
     
     # 過濾過於接近邊界的點
     filtered_points = [0]

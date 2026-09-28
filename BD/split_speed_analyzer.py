@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import logging
 
 def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, laps_data=None):
@@ -8,7 +9,18 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
     
     Update: 優先使用 laps_data (從 Hip X 趨勢分析得來) 來決定 25m/50m 的觸壁時間 (使用 Lap End Frame)。
     15m 仍然使用座標穿越偵測。
+    
+    Update (Thesis Logic): 使用膝角 (Knee Flexion Angle) 來偵測真實的 Push-off 作為計時起點。
     """
+
+    from scipy.signal import find_peaks
+    def get_first_true_local_min_backwards(df_sub):
+        vals = df_sub['angle_smooth'].values
+        peaks, _ = find_peaks(-vals, prominence=5)
+        if len(peaks) > 0:
+            return int(df_sub.iloc[peaks[-1]]['frame_id'])
+        else:
+            return int(df_sub.loc[df_sub['angle_smooth'].idxmin(), 'frame_id'])
 
     # --- DEBUG 輸出 1：輸入參數與數據狀態 ---
     logging.info("--- Timing Analysis Debug Start ---")
@@ -17,25 +29,59 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
         f"Line Positions (X): 15m={d15m_x0:.2f}, 25m={d25m_x0:.2f}, 50m={d50m_x0:.2f}"
     )
 
+    # === NEW LOGIC: Dynamic Calibration ===
+    if d15m_x0 is None or d25m_x0 is None:
+        try:
+            from BD.calibration import get_pixel_for_distance
+            d15m_x0 = get_pixel_for_distance(15.0)
+            d25m_x0 = get_pixel_for_distance(25.0)
+            d0m_x0 = get_pixel_for_distance(0.0)
+            logging.info(f"Dynamically calibrated pixels: 0m={d0m_x0:.2f}, 15m={d15m_x0:.2f}, 25m={d25m_x0:.2f}")
+        except Exception as e:
+            logging.warning(f"Dynamic calibration failed, using fallback pixels: {e}")
+            # fallback
+            d0m_x0 = 3748.0
+            d15m_x0 = 1551.0
+            d25m_x0 = 136.0
+
     try:
         # 讀取數據
         df = pd.read_csv(txt_path, sep=r"\s+", header=None)
-        # 選擇所需欄位: 0=frame, 2=bbox_x, 4=bbox_w, 16=wrist_x
-        if df.shape[1] > 16:
-            df = df[[0, 2, 4, 16]]
-            df.columns = ["frame", "bbox_x", "bbox_w", "wrist_x"]
+        # 0=frame, 2=bbox_x, 4=bbox_w
+        if df.shape[1] > 4:
+            # 計算 bbox_left (xmin) 與 bbox_right (xmax)
+            # 因為 bbox_x 是中心點，所以 left = x - w/2, right = x + w/2
+            df["bbox_left"] = df[2] - df[4] / 2.0
+            df["bbox_right"] = df[2] + df[4] / 2.0
+            
+            # 簡單平滑處理，避免因為 width 瞬間變動導致的判定誤觸
+            for col in ["bbox_left", "bbox_right"]:
+                df.loc[df[col].diff().abs() > 50, col] = np.nan
+                df.loc[df[col].diff(periods=-1).abs() > 50, col] = np.nan
+                df[col] = df[col].interpolate(method="linear", limit_direction="both")
+                df[col] = df[col].rolling(window=7, min_periods=1, center=True).mean()
         else:
             logging.error(f"❌ TXT file format unexpected. Columns: {df.shape[1]}")
-            return {"15m": None, "25m": None, "50m": None}, None
+            return {"15m": None, "25m": None, "50m": None}, None, {}, {}, start_frame
 
-        # 過濾起始幀
-        df = df[df["frame"] >= start_frame].reset_index(drop=True)
+        # 這裡不提早過濾 start_frame，因為我們將重新計算精準的 Kick-off
+        # df = df[df[0] >= start_frame].reset_index(drop=True)
+        
+        df.rename(columns={0: "frame"}, inplace=True)
+        
+        # --- NEW LOGIC: Load and Smooth Knee Angles ---
+        try:
+            from BD.diving_analyzer_track_angles import calculate_kick_angles_from_txt
+            df_angles = calculate_kick_angles_from_txt(txt_path)
+            df_angles["angle_smooth"] = df_angles["angle"].rolling(window=7, min_periods=1, center=True).mean()
+            logging.info("✅ Knee angles loaded for Push-off detection.")
+        except Exception as e:
+            logging.warning(f"⚠️ Could not calculate knee angles: {e}")
+            df_angles = None
 
         if df.empty:
-            logging.warning(
-                f"❌ DataFrame is empty after filtering by start_frame {start_frame}."
-            )
-            return {"15m": None, "25m": None, "50m": None}, None
+            logging.error(f"❌ DataFrame is empty after filtering by start_frame {start_frame}.")
+            return {"15m": None, "25m": None, "50m": None}, None, {}, {}, start_frame
 
         logging.info(
             f"Data Loaded. Frames to process: {df['frame'].min()} to {df['frame'].max()}"
@@ -43,11 +89,10 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
 
     except Exception as e:
         logging.error(f"❌ Data loading or cleaning failed: {e}")
-        return {"15m": None, "25m": None, "50m": None}, None
+        return {"15m": None, "25m": None, "50m": None}, None, {}, {}, start_frame
 
     passed = {"15m": None, "25m": None, "50m": None}
 
-    # === NEW LOGIC: Use laps_data if available ===
     # === NEW LOGIC: Use laps_data if available ===
     if laps_data:
         logging.info(f"✅ Using Laps Data for Split Timing: {len(laps_data)} raw laps.")
@@ -69,37 +114,74 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
                   # If diving segment exists but swimming doesn't explicit frame, assume rest is swimming
                   logging.info(f"        Detailed: Swimming Phase: {div_seg[1]}-{vl.get('lap_range')[1]}")
 
-        # 2. Identify Outbound (Decreasing) -> Handles 0-25m
+        # 2. Identify Outbound (Decreasing) -> Handles Kickoff, 15m, 25m
         outbound_lap = next((L for L in valid_laps if "decreasing" in L.get("trend", "")), None)
         
         if outbound_lap:
             l1_start, l1_end = outbound_lap["lap_range"]
             logging.info(f"   identified Outbound Lap: {outbound_lap.get('lap_index')} ({l1_start}-{l1_end})")
             
-            # --- 25m Split Logic ---
-            # 假設去程結束就是碰到對面牆壁 (25m)
-            passed["25m"] = l1_end
-            logging.info(f"   Note: Outbound Lap End ({l1_end}) set as 25m split.")
+            df_outbound = df[(df["frame"] >= l1_start) & (df["frame"] <= l1_end)]
             
-            # --- 15m Split Logic ---
-            try:
-                df_lap1 = df[(df["frame"] >= l1_start) & (df["frame"] <= l1_end)]
-                # 假設去程 X 減少，尋找首次 wrist_x <= d15m_x0
-                cross_15 = df_lap1[df_lap1["wrist_x"] <= d15m_x0]
-                if not cross_15.empty:
-                    passed["15m"] = int(cross_15.iloc[0]["frame"])
-                    logging.info(f"   ✅ 15m Detected at Frame {passed['15m']} (WristX <= {d15m_x0:.1f})")
+            # --- Kick-off (0m) Split Logic ---
+            # 尋找去程初期的最大 BBox 右側 (選手發力前、身體往後延伸的極限點)
+            df_kickoff_search = df_outbound.head(int(len(df_outbound) * 0.3)) # 只找前 30% 作為發力準備期
+            if not df_kickoff_search.empty:
+                max_windup_idx = df_kickoff_search["bbox_right"].idxmax()
+                max_windup_val = df_kickoff_search.loc[max_windup_idx, "bbox_right"]
+                
+                # 從這個極值點往後找，只要掉超過 10 pixel，就視為腳正式離開出發台/牆壁！
+                df_after_windup = df_outbound.loc[max_windup_idx:]
+                cross_0 = df_after_windup[df_after_windup["bbox_right"] < max_windup_val - 10]
+                
+                if not cross_0.empty:
+                    kick_off_0m = int(cross_0.iloc[0]["frame"])
+                    logging.info(f"   ✅ Kick-off Detected at Frame {kick_off_0m} (Dropped from peak {max_windup_val:.1f})")
                 else:
-                    logging.warning(f"   ⚠️ 15m cross not detected via coordinates in Outbound Lap.")
-            except Exception as e:
-                logging.warning(f"Error calculating 15m split: {e}")
+                    kick_off_0m = l1_start
+                    logging.warning(f"   ⚠️ Kick-off fallback to lap start: {kick_off_0m}")
+            else:
+                kick_off_0m = l1_start
+                logging.warning(f"   ⚠️ Kick-off fallback (empty search window): {kick_off_0m}")
+            
+            # --- TRUE PUSH-OFF (0m) LOGIC ---
+            push_off_0m = kick_off_0m
+            if df_angles is not None and not df_angles.empty:
+                search_start = max(df_angles['frame_id'].min(), kick_off_0m - 90)
+                df_search = df_angles[(df_angles['frame_id'] >= search_start) & (df_angles['frame_id'] <= kick_off_0m)]
+                if not df_search.empty:
+                    push_off_0m = get_first_true_local_min_backwards(df_search)
+                    logging.info(f"   ✅ True 0m Push-off detected via knee angle at Frame {push_off_0m}")
+            
+            passed["0m_push_off"] = push_off_0m
+            # 將舊的 start_frame 賦值為 push_off_0m，以利後續 fallback 使用
+            start_frame = push_off_0m
+            
+            # 只取 kickoff 之後的資料來找 15m 和 25m
+            df_outbound = df_outbound[df_outbound["frame"] >= kick_off_0m]
+
+            # --- 15m Split Logic ---
+            # 15m: BBox 左側 (Leading Edge) 到達 <= 15m
+            cross_15 = df_outbound[df_outbound["bbox_left"] <= d15m_x0]
+            if not cross_15.empty:
+                passed["15m"] = int(cross_15.iloc[0]["frame"])
+                logging.info(f"   ✅ 15m Detected at Frame {passed['15m']}")
+            
+            # --- 25m Split Logic ---
+            # 25m: BBox 左側 (Leading Edge) 到達 <= 25m
+            cross_25 = df_outbound[df_outbound["bbox_left"] <= d25m_x0]
+            if not cross_25.empty:
+                passed["25m"] = int(cross_25.iloc[0]["frame"])
+                logging.info(f"   ✅ 25m Detected at Frame {passed['25m']}")
+            else:
+                passed["25m"] = l1_end
+                logging.warning(f"   ⚠️ 25m fallback to lap end: {passed['25m']}")
+                
         else:
              logging.warning("   ⚠️ No 'decreasing' (Outbound) lap found. 15m/25m splits skipped.")
 
-        # 3. Identify Inbound (Increasing) -> Handles 25-50m
-        # We look for an increasing lap that starts AFTER the outbound lap (if outbound exists)
-        # Or just the first increasing lap if no outbound exists (e.g. start video from other side?)
-        start_search_frame = outbound_lap["lap_range"][1] if outbound_lap else 0
+        # 3. Identify Inbound (Increasing) -> Handles 50m
+        start_search_frame = passed.get("25m") if passed.get("25m") else (outbound_lap["lap_range"][1] if outbound_lap else 0)
         
         inbound_lap = next((L for L in valid_laps 
                             if "increasing" in L.get("trend", "") 
@@ -109,10 +191,49 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
             l2_start, l2_end = inbound_lap["lap_range"]
             logging.info(f"   Identified Inbound Lap: {inbound_lap.get('lap_index')} ({l2_start}-{l2_end})")
             
+            df_inbound = df[(df["frame"] >= l2_start) & (df["frame"] <= l2_end)]
+            
+            # --- 25m Kick-off & Push-off Logic ---
+            push_off_25m = l2_start # Default fallback
+            if passed.get("25m"):
+                df_after_touch = df[(df["frame"] > passed["25m"]) & (df["frame"] <= l2_end)]
+                # Trailing edge for inbound is bbox_left, leaving the 25m wall
+                cross_out = df_after_touch[df_after_touch["bbox_left"] > d25m_x0]
+                if not cross_out.empty:
+                    kick_off_25m = int(cross_out.iloc[0]["frame"])
+                else:
+                    kick_off_25m = passed["25m"]
+                    
+                if df_angles is not None and not df_angles.empty:
+                    search_angle_start = max(df_angles['frame_id'].min(), max(passed["25m"], kick_off_25m - 120))
+                    df_angle_search = df_angles[(df_angles['frame_id'] >= search_angle_start) & (df_angles['frame_id'] <= kick_off_25m)]
+                    if not df_angle_search.empty:
+                        push_off_25m = get_first_true_local_min_backwards(df_angle_search)
+                        logging.info(f"   ✅ True 25m Push-off detected via knee angle at Frame {push_off_25m}")
+                    else:
+                        push_off_25m = kick_off_25m
+            passed["25m_push_off"] = push_off_25m
+            
             # --- 50m Split Logic ---
-            # 回程結束就是回到起點 (50m)
-            passed["50m"] = l2_end
-            logging.info(f"   Note: Inbound Lap End ({l2_end}) set as 50m split.")
+            # 50m: 回程時，BBox 右側 (Leading Edge in this direction) 只要一大於 3748(0m) 就算到了
+            # 為了避免 hip_x 的 lap 提早結束導致漏抓，我們直接從回程起點 (l2_start) 搜尋到影片最後一格
+            df_after_turn = df[df["frame"] >= l2_start]
+            cross_50 = df_after_turn[df_after_turn["bbox_right"] >= d50m_x0]
+            
+            if not cross_50.empty:
+                passed["50m"] = int(cross_50.iloc[0]["frame"])
+                logging.info(f"   ✅ 50m Detected at Frame {passed['50m']}")
+            else:
+                # 找不到大於 3748 的幀 (可能沒摸到物理牆壁、角度問題等)
+                # 改為抓取回程區間中「BBox 右側到達最遠(最大值)」的那一幀，代表手伸到最極限觸牆的瞬間
+                df_inbound_only = df[(df["frame"] >= l2_start) & (df["frame"] <= l2_end)]
+                if not df_inbound_only.empty:
+                    max_right_frame = int(df_inbound_only.loc[df_inbound_only["bbox_right"].idxmax(), "frame"])
+                    passed["50m"] = max_right_frame
+                    logging.warning(f"   ⚠️ 50m fallback to MAX BBox Right: {passed['50m']}")
+                else:
+                    passed["50m"] = l2_end
+                    logging.warning(f"   ⚠️ 50m fallback to lap end: {passed['50m']}")
         else:
              logging.warning("   ⚠️ No proper 'increasing' (Inbound) lap found. 50m split skipped.")
 
@@ -135,7 +256,7 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
             if x_wrist < min_observed_wrist_x: min_observed_wrist_x = x_wrist
 
             # 1. 15m
-            if passed["15m"] is None and x_wrist <= d15m_x0:
+            if passed["15m"] is None and xmin <= d15m_x0:
                 passed["15m"] = frame
                 logging.info(f"✅ 15m Passed at Frame {frame}")
 
@@ -220,21 +341,33 @@ def analyze_split_times(txt_path, start_frame, fps, d15m_x0, d25m_x0, d50m_x0, l
     else:
         logging.warning("❌ No 25m/50m end point detected.")
 
-    # 2. Segment Split Times
-    # 0-15m
-    t0_15 = get_duration(start_frame, passed["15m"])
-    if t0_15: split_breakdown["0-15m"] = f"{t0_15:.2f}s"
+    # 2. Segment Split Times (Updated for Thesis Logic)
     
-    # 15-25m
-    t15_25 = get_duration(passed["15m"], passed["25m"])
-    if t15_25: split_breakdown["15-25m"] = f"{t15_25:.2f}s"
+    # 0-15m: 15m - 0m Push-off
+    if passed.get("0m_push_off") and passed.get("15m"):
+        t0_15 = get_duration(passed["0m_push_off"], passed["15m"])
+        if t0_15: split_breakdown["0-15m"] = f"{t0_15:.2f}s"
     
-    # 25-50m
-    t25_50 = get_duration(passed["25m"], passed["50m"])
-    if t25_50: split_breakdown["25-50m"] = f"{t25_50:.2f}s"
+    # 15-25m: 25m Wall-touch - 15m
+    if passed.get("15m") and passed.get("25m"):
+        t15_25 = get_duration(passed["15m"], passed["25m"])
+        if t15_25: split_breakdown["15-25m"] = f"{t15_25:.2f}s"
+        
+    # 0-25m (Lap 1 Total): 25m Wall-touch - 0m Push-off
+    if passed.get("0m_push_off") and passed.get("25m"):
+        t_lap1 = get_duration(passed["0m_push_off"], passed["25m"])
+        if t_lap1: split_breakdown["0-25m"] = f"{t_lap1:.2f}s"
+    
+    # 25-50m (Lap 2 Total): 50m Wall-touch - 25m Push-off
+    if passed.get("25m_push_off") and passed.get("50m"):
+        t25_50 = get_duration(passed["25m_push_off"], passed["50m"])
+        if t25_50: split_breakdown["25-50m"] = f"{t25_50:.2f}s"
 
-    logging.info(f"Split Breakdown: {split_breakdown}")
+    logging.info(f"Split Breakdown (using Push-off base): {split_breakdown}")
     logging.info(f"Lap Durations (for SPM): {lap_durations}")
 
     logging.info("--- Timing Analysis Debug End ---")
-    return passed, total_time, split_breakdown, lap_durations
+    
+    # Return 0m_push_off as start_frame if available
+    final_start = passed.get("0m_push_off", start_frame)
+    return passed, total_time, split_breakdown, lap_durations, final_start

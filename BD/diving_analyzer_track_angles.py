@@ -127,8 +127,8 @@ def calculate_kick_segment_metrics(frames, hip_xs, min_frames, video_width=3840)
     # Sort minima by frame just in case
     sorted_min_frames = sorted(min_frames)
     
-    # Use dynamic width for scale factor
-    scale_factor = 25.0 / (video_width if video_width > 0 else 3840)
+    # 引入校正模組
+    from BD.calibration import get_distance_between_pixels
 
     for i in range(1, len(sorted_min_frames)):
         start_f = int(sorted_min_frames[i-1])
@@ -140,8 +140,8 @@ def calculate_kick_segment_metrics(frames, hip_xs, min_frames, video_width=3840)
             start_x = frame_to_hip_x[start_f]
             end_x = frame_to_hip_x[end_f]
             
-            delta_pixels = abs(end_x - start_x)
-            dist_m = delta_pixels * scale_factor # Dynamic Scale
+            # 使用精準的校正計算兩點間實際距離
+            dist_m = get_distance_between_pixels(start_x, end_x)
             
             label = f"{dist_m:.2f}m"
             center_f = (start_f + end_f) / 2
@@ -172,8 +172,8 @@ def detect_laps_by_hip_x(df, min_lap_duration=100):
     
     回傳: list of (start_frame, end_frame, trend_label)
     """
-    # 1. 取出並平滑 BBox X (BBox X 比 Hip X 更能可靠反映泳者實際位置，避免關鍵點插值誤差)
-    x_raw = df["bbox_x"].values
+    # 1. 取出並平滑 Hip X (利用髖關節代表身體重心大範圍位移)
+    x_raw = df["hip_x"].values
     if len(x_raw) < min_lap_duration:
         return [(df["frame_id"].min(), df["frame_id"].max(), "unknown")]
         
@@ -261,16 +261,10 @@ def detect_laps_by_hip_x(df, min_lap_duration=100):
     return laps
 
 
-def find_best_segment_in_range(df_subset, waterline_y, use_bbox=True):
+def find_best_segment_in_range(df_subset, waterline_y):
     """
     在給定的時間區間內，找出「最佳」的一個潛泳段。
-    
-    參數:
-        use_bbox: 
-            True  -> 使用 BBox 上緣 (較寬鬆/穩定)
-            False -> 使用 全關節(頭~腳)皆在水下 (嚴格檢查/Fallback)
-            
-    回傳: (start, end) or None
+    定義為：BBox 上緣 AND 全關節(頭~腳)皆在水面下。
     """
     from itertools import groupby
     from operator import itemgetter
@@ -278,20 +272,9 @@ def find_best_segment_in_range(df_subset, waterline_y, use_bbox=True):
     if df_subset.empty:
         return None
 
-    if use_bbox:
-        # 策略 A: BBox 上緣 > 水面
-        condition = ((df_subset["bbox_y"] - df_subset["height"] / 2) > waterline_y)
-    else:
-        # 策略 B (Fallback): 嚴格全關節潛泳
-        condition = (
-            (df_subset["col8"] > waterline_y) &
-            (df_subset["shoulder_y"] > waterline_y) &
-            (df_subset["elbow_y"] > waterline_y) &
-            (df_subset["wrist_y"] > waterline_y) &
-            (df_subset["hip_y"] > waterline_y) &
-            (df_subset["knee_y"] > waterline_y) &
-            (df_subset["ankle_y"] > waterline_y)
-        )
+    # 根據邏輯討論，僅使用嚴格的 BBox 上緣判斷潛泳
+    # (因為關節點在水下容易遺失，且 BBox 通常涵蓋最大範圍)
+    condition = ((df_subset["bbox_y"] - df_subset["height"] / 2) > waterline_y)
 
     valid_frames = df_subset[condition]["frame_id"].tolist()
     if not valid_frames:
@@ -682,32 +665,11 @@ def analyze_diving_phase(
         # (A) 尋找潛泳段 (S, E)
         df_lap = df_clean[(df_clean["frame_id"] >= l_start) & (df_clean["frame_id"] <= l_end)]
         
-        # 優先嘗試：BBox 上緣判斷
-        div_seg = find_best_segment_in_range(df_lap, waterline_y, use_bbox=True)
+        # 尋找潛泳段 (嚴格合併判斷：BBox 上緣 AND 全關節皆在水面下)
+        div_seg = find_best_segment_in_range(df_lap, waterline_y)
         
-        # 檢查是否需要 Fallback
-        # 條件 1: 沒找到潛泳段
-        # 條件 2: 找到潛泳段，但結束點 >= Lap 終點 (代表沒有游泳段，通常不合理)
-        need_fallback = False
         if div_seg is None:
-            need_fallback = True
-            print(f"     -> [Check] No diving segment found with BBox method.")
-        elif div_seg[1] >= l_end - 5: # 保留一點緩衝，若潛泳幾乎佔滿整趟
-            need_fallback = True
-            print(f"     -> [Check] Diving segment covers entire lap (No Swim Phase). Unlikely.")
-
-        # Fallback 機制: 改用全關節嚴格檢查
-        if need_fallback:
-            print(f"     -> [Fallback] Trying Strict Joints method...")
-            div_seg_strict = find_best_segment_in_range(df_lap, waterline_y, use_bbox=False)
-            
-            # 只有當嚴格模式有找到結果時才覆蓋
-            if div_seg_strict:
-                div_seg = div_seg_strict
-                print(f"     -> [Fallback] Success! Found segment using Strict Joints method: {div_seg}")
-            else:
-                 print(f"     -> [Fallback] Strict method also failed to find better segment.")
-                 # 若嚴格模式也沒找到，維持原本的結果 (可能是 None 或 全程潛泳)
+            print(f"     -> [Check] No diving segment found with strict combined method.")
         
         lap_result = {
             "lap_index": i + 1,
@@ -727,10 +689,10 @@ def analyze_diving_phase(
         if div_seg:
             s_d_raw, e_d = div_seg
             
-            # --- USER REQUEST: Align Diving Start to Lap Start ---
-            # "前泳判斷 最後判斷完之後 潛泳的開頭都對齊LAP的開頭"
-            s_d = int(l_start)
-            print(f"     -> [Align] Forcing Diving Start {s_d_raw} -> Lap Start {s_d}")
+            # 依據最新需求：回歸最嚴謹的「全身都在水面下」定義 (Bounding Box AND 所有關節 Y > 水線)
+            # 所以直接使用 find_best_segment_in_range 找到的 s_d_raw 作為起點
+            s_d = s_d_raw
+            print(f"     -> [Strict] Using strict combined underwater detection Start {s_d}")
 
             # 原本針對 Lap 1 的檢查邏輯 (現在已被覆蓋，但保留結構以免副作用)
             if i == 0 or trend == "decreasing": 

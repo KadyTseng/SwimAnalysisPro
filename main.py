@@ -102,7 +102,7 @@ app = FastAPI(
     title="SwimAnalysisPro API",
     description="游泳影片分析後端 API",
     version="2.0.0",
-    root_path=os.getenv("FASTAPI_ROOT_PATH", "/swimming_analysis/api"),
+    root_path=os.getenv("FASTAPI_ROOT_PATH", ""),
 )
 
 # 配置 CORS
